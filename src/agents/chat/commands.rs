@@ -308,7 +308,7 @@ Chat history:\n\
 
     let output = result.trim_end().to_string();
     let safe_datetime = datetime.replace(' ', ".").replace(':', "_");
-    let filename = format!("netero.{}.md", safe_datetime);
+    let filename = format!("gareth.{}.md", safe_datetime);
     let path = filename.as_str();
     let write_result = std::fs::OpenOptions::new()
         .create(true)

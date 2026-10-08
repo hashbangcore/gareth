@@ -19,20 +19,20 @@ release-build:
     just dist::upload
 
 error:
-    cargo run --bin netero -- "hi" > error.txt 2>&1
+    cargo run --bin gareth -- "hi" > error.txt 2>&1
 
 commit hint="":
-    netero commit "{{ hint }}" | git commit -F - --edit
+    gareth commit "{{ hint }}" | git commit -F - --edit
 
 install:
-    cargo install --path . --bin netero
+    cargo install --path . --bin gareth
 
 install-dev:
-    cargo install --path . --bin netero-dev
+    cargo install --path . --bin gareth-dev
 
 test-envrc hint="true":
     @direnv allow
-    direnv exec . cargo run --bin netero  -- -v  "{{ hint }}"
+    direnv exec . cargo run --bin gareth  -- -v  "{{ hint }}"
     @direnv disallow
 
 show-code:

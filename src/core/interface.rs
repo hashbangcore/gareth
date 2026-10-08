@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "netero",
+    name = "gareth",
     author,
     version,
     about = "CLI for interacting with language models",
@@ -48,7 +48,7 @@ pub enum Commands {
         #[arg(trailing_var_arg = true)]
         hint: Vec<String>,
         /// Path to a custom commit convention file
-        #[arg(short = 'c', long, env = "NETERO_CONVENTION")]
+        #[arg(short = 'c', long, env = "GARETH_CONVENTION")]
         convention: Option<String>,
     },
 

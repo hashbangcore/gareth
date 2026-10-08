@@ -3,7 +3,7 @@ use crate::util::env::env_var;
 
 /// Configuration resolved from environment variables and CLI flags.
 ///
-/// Netero is provider agnostic: endpoint, model and key always come from the
+/// Gareth is provider agnostic: endpoint, model and key always come from the
 /// environment, there is no built-in provider.
 pub struct Config {
     pub endpoint: String,
@@ -14,9 +14,9 @@ pub struct Config {
 impl Config {
     /// Loads configuration from environment variables.
     pub fn from_env() -> Result<Self, ServiceError> {
-        let endpoint = env_var("NETERO_URL");
-        let model = env_var("NETERO_MODEL");
-        let apikey = env_var("NETERO_API_KEY");
+        let endpoint = env_var("GARETH_URL");
+        let model = env_var("GARETH_MODEL");
+        let apikey = env_var("GARETH_API_KEY");
 
         let missing = missing_vars(endpoint.as_deref(), model.as_deref());
         if !missing.is_empty() {
@@ -33,7 +33,7 @@ impl Config {
 
 /// Lists the variables that still need to be set.
 fn missing_vars(endpoint: Option<&str>, model: Option<&str>) -> Vec<&'static str> {
-    [("NETERO_URL", endpoint), ("NETERO_MODEL", model)]
+    [("GARETH_URL", endpoint), ("GARETH_MODEL", model)]
         .into_iter()
         .filter_map(|(name, value)| value.is_none().then_some(name))
         .collect()
@@ -50,16 +50,16 @@ mod tests {
 
     #[test]
     fn lists_both_variables_when_nothing_is_set() {
-        assert_eq!(missing_vars(None, None), vec!["NETERO_URL", "NETERO_MODEL"]);
+        assert_eq!(missing_vars(None, None), vec!["GARETH_URL", "GARETH_MODEL"]);
     }
 
     #[test]
     fn lists_only_the_missing_one() {
         assert_eq!(
             missing_vars(Some("http://x/v1"), None),
-            vec!["NETERO_MODEL"]
+            vec!["GARETH_MODEL"]
         );
-        assert_eq!(missing_vars(None, Some("model")), vec!["NETERO_URL"]);
+        assert_eq!(missing_vars(None, Some("model")), vec!["GARETH_URL"]);
     }
 
     #[test]
@@ -71,11 +71,11 @@ mod tests {
     fn names_every_missing_variable_in_one_message() {
         assert_eq!(
             missing_message(&missing_vars(None, None)),
-            "missing NETERO_URL and NETERO_MODEL"
+            "missing GARETH_URL and GARETH_MODEL"
         );
         assert_eq!(
             missing_message(&missing_vars(Some("http://x/v1"), None)),
-            "missing NETERO_MODEL"
+            "missing GARETH_MODEL"
         );
     }
 }

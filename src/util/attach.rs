@@ -145,10 +145,10 @@ mod tests {
 
     #[test]
     fn reads_the_expanded_path_but_keeps_the_token_in_the_attachment() {
-        let read = reader_for(&[("/home/netero/notas.txt", "contenido")]);
+        let read = reader_for(&[("/home/gareth/notas.txt", "contenido")]);
         let tokens = split_args("lee ~/notas.txt");
         let (remaining, attachments) =
-            extract_attachments_from_tokens(&tokens, read, Some("/home/netero"));
+            extract_attachments_from_tokens(&tokens, read, Some("/home/gareth"));
 
         assert_eq!(remaining, vec!["lee"]);
         assert_eq!(attachments[0].path, "~/notas.txt");
@@ -158,15 +158,15 @@ mod tests {
     #[test]
     fn expands_home_only_when_available() {
         assert_eq!(
-            expand_path("~/notas.txt", Some("/home/netero")),
-            "/home/netero/notas.txt"
+            expand_path("~/notas.txt", Some("/home/gareth")),
+            "/home/gareth/notas.txt"
         );
         assert_eq!(expand_path("~/notas.txt", None), "~/notas.txt");
         assert_eq!(
-            expand_path("/etc/hosts", Some("/home/netero")),
+            expand_path("/etc/hosts", Some("/home/gareth")),
             "/etc/hosts"
         );
-        assert_eq!(expand_path("notas.txt", Some("/home/netero")), "notas.txt");
+        assert_eq!(expand_path("notas.txt", Some("/home/gareth")), "notas.txt");
     }
 
     #[test]

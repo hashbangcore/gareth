@@ -5,9 +5,9 @@ description = "A CLI for LLMs, built for advanced GNU/Linux users."
 edition = "2024"
 keywords = ["cli", "llm", "linux"]
 license = "BSD-2-Clause"
-name = "netero"
+name = "gareth"
 readme = "README.md"
-repository = "https://github.com/hashbangcore/netero"
+repository = "https://github.com/hashbangcore/gareth"
 version = "0.1.2"
 
 [dependencies]

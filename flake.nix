@@ -9,7 +9,7 @@
     pkgs = import nixpkgs { inherit system; };
   in {
     packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
-      pname = "netero";
+      pname = "gareth";
       version = "0.1.2";
       src = ./.;
       cargoLock = {
@@ -19,7 +19,7 @@
 
     apps.${system}.default = {
       type = "app";
-      program = "${self.packages.${system}.default}/bin/netero";
+      program = "${self.packages.${system}.default}/bin/gareth";
     };
   };
 }

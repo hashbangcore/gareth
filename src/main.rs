@@ -64,7 +64,7 @@ async fn execute(
         }
         Some(core::Commands::Completion { shell }) => {
             let mut cmd = core::Cli::command();
-            generate(*shell, &mut cmd, "netero", &mut std::io::stdout());
+            generate(*shell, &mut cmd, "gareth", &mut std::io::stdout());
         }
         None => {
             if args.prompt.is_empty() {

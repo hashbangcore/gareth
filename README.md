@@ -1,6 +1,6 @@
 # Introduction
 
-Netero is a CLI for LLMs, oriented toward advanced GNU/Linux users.
+Gareth is a CLI for LLMs, oriented toward advanced GNU/Linux users.
 It runs from the command line, integrates into pipelines,
 and offers a minimal chat with command expansion.
 
@@ -10,46 +10,46 @@ and offers a minimal chat with command expansion.
 
 ## Installation
 
-Netero can be installed in several ways:
+Gareth can be installed in several ways:
 
 ### Using Cargo
 
 ```bash
-cargo install netero
+cargo install gareth
 ```
 
 ### Using Nix Flakes
 
 ```bash
-nix profile add github:hashbangcore/netero
+nix profile add github:hashbangcore/gareth
 ```
 
 ---
 
 ## Environment Variables
 
-Netero is provider agnostic: it speaks to any OpenAI-compatible endpoint and ships without a
+Gareth is provider agnostic: it speaks to any OpenAI-compatible endpoint and ships without a
 built-in provider, so the destination is provided through configuration.
 
-* `NETERO_URL` (required)
+* `GARETH_URL` (required)
   Chat completions endpoint URL.
 
-* `NETERO_MODEL` (required)
+* `GARETH_MODEL` (required)
   Name of the model to use.
 
-* `NETERO_API_KEY` (optional)
+* `GARETH_API_KEY` (optional)
   API key, sent as a bearer token when the endpoint asks for one.
 
-* `NETERO_TRACE_SOCKET` (optional)
-  Path of the `--trace` debug socket. Defaults to `$XDG_RUNTIME_DIR/netero.trace.sock`,
-  or `/tmp/netero.trace.sock`.
+* `GARETH_TRACE_SOCKET` (optional)
+  Path of the `--trace` debug socket. Defaults to `$XDG_RUNTIME_DIR/gareth.trace.sock`,
+  or `/tmp/gareth.trace.sock`.
 
 ---
 
 ## Usage
 
 ```
-Usage: netero [OPTIONS] [PROMPT] [COMMAND]
+Usage: gareth [OPTIONS] [PROMPT] [COMMAND]
 ```
 
 If there is input from `stdin`, it is added as additional context.
@@ -96,7 +96,7 @@ If there is input from `stdin`, it is added as additional context.
 You can use the `--trace` option to inspect the prompts being sent:
 
 ```
-netero --trace
+gareth --trace
 ```
 
 ---
@@ -178,7 +178,7 @@ The scan took 4.89 seconds. No critical errors were found.
 
 ## Using Paths in Prompts
 
-Netero automatically detects absolute and relative paths in the prompt.
+Gareth automatically detects absolute and relative paths in the prompt.
 
 Any word that:
 
@@ -197,7 +197,7 @@ No special commands are required.
 Within an interactive session:
 
 ```sh
-netero chat
+gareth chat
 ```
 
 You can write:
@@ -215,7 +215,7 @@ If `./src/main.rs` exists and is a file, its contents will be automatically atta
 It also works from the command line:
 
 ```sh
-netero "Translate this file ./README.en.md"
+gareth "Translate this file ./README.en.md"
 ```
 
 If `./README.en.md` exists, its contents will be automatically included in the context before sending the request to the model.
@@ -236,7 +236,7 @@ If `./README.en.md` exists, its contents will be automatically included in the c
 ### 1. Direct prompt
 
 ```sh
-netero "Explain how io_uring works in Linux"
+gareth "Explain how io_uring works in Linux"
 ```
 
 ---
@@ -244,7 +244,7 @@ netero "Explain how io_uring works in Linux"
 ### 2. Prompt without quotes
 
 ```sh
-netero Explain the ownership model in Rust
+gareth Explain the ownership model in Rust
 ```
 
 ---
@@ -252,7 +252,7 @@ netero Explain the ownership model in Rust
 ### 3. Using `stdin` as context
 
 ```sh
-cat Cargo.toml | netero "Describe the main dependencies"
+cat Cargo.toml | gareth "Describe the main dependencies"
 ```
 
 ---
@@ -260,7 +260,7 @@ cat Cargo.toml | netero "Describe the main dependencies"
 ### 4. Analyzing command output
 
 ```sh
-dmesg | tail -n 50 | netero "Are there any relevant errors in these logs?"
+dmesg | tail -n 50 | gareth "Are there any relevant errors in these logs?"
 ```
 
 ---
@@ -268,7 +268,7 @@ dmesg | tail -n 50 | netero "Are there any relevant errors in these logs?"
 ### 5. Generate commit message from staging
 
 ```sh
-netero commit | git commit -F -
+gareth commit | git commit -F -
 ```
 
 ---
@@ -276,7 +276,7 @@ netero commit | git commit -F -
 ### 6. Generate message with custom convention
 
 ```sh
-netero commit -c .repo/convencion.txt
+gareth commit -c .repo/convencion.txt
 ```
 
 ---
@@ -284,17 +284,17 @@ netero commit -c .repo/convencion.txt
 ### 7. Verbose mode
 
 ```sh
-netero -v "Explain what a mutex is in Rust"
+gareth -v "Explain what a mutex is in Rust"
 ```
 
 ---
 
 ### 8. Inspect sent prompts (debug mode)
 
-Netero runs a debug socket that listens to all prompts sent by running instances.
+Gareth runs a debug socket that listens to all prompts sent by running instances.
 
 ```sh
-netero --trace
+gareth --trace
 ```
 
 ---
@@ -302,11 +302,11 @@ netero --trace
 ### 9. Use custom provider
 
 ```sh
-export NETERO_URL="https://api.example.com/v1/chat/completions"
-export NETERO_MODEL="model"
-export NETERO_API_KEY="api-key"
+export GARETH_URL="https://api.example.com/v1/chat/completions"
+export GARETH_MODEL="model"
+export GARETH_API_KEY="api-key"
 
-netero "Describe the CFS scheduling algorithm"
+gareth "Describe the CFS scheduling algorithm"
 ```
 
 ---
@@ -314,7 +314,7 @@ netero "Describe the CFS scheduling algorithm"
 ### 10. Generate shell autocompletion
 
 ```sh
-netero completion bash
+gareth completion bash
 ```
 
 ---
@@ -322,7 +322,7 @@ netero completion bash
 ### 11. Start interactive session
 
 ```sh
-netero chat
+gareth chat
 ```
 
 ---

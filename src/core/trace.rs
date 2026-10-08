@@ -8,7 +8,7 @@ use tokio::net::UnixDatagram;
 
 use crate::util::env::env_var;
 
-const DEFAULT_TRACE_SOCKET_PATH: &str = "/tmp/netero.trace.sock";
+const DEFAULT_TRACE_SOCKET_PATH: &str = "/tmp/gareth.trace.sock";
 
 /// Ways the trace server or its client can fail.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl Error for TraceError {
 /// Resolves the socket path from the environment.
 fn resolve_trace_socket_path() -> PathBuf {
     socket_path_from(
-        env_var("NETERO_TRACE_SOCKET").as_deref(),
+        env_var("GARETH_TRACE_SOCKET").as_deref(),
         env_var("XDG_RUNTIME_DIR").as_deref(),
     )
 }
@@ -56,7 +56,7 @@ fn socket_path_from(explicit: Option<&str>, runtime_dir: Option<&str>) -> PathBu
     }
 
     if let Some(value) = runtime_dir {
-        return Path::new(value).join("netero.trace.sock");
+        return Path::new(value).join("gareth.trace.sock");
     }
 
     PathBuf::from(DEFAULT_TRACE_SOCKET_PATH)
@@ -143,8 +143,8 @@ mod tests {
     #[test]
     fn explicit_socket_wins_over_the_runtime_dir() {
         assert_eq!(
-            socket_path_from(Some("/run/netero.sock"), Some("/run/user/1000")),
-            PathBuf::from("/run/netero.sock")
+            socket_path_from(Some("/run/gareth.sock"), Some("/run/user/1000")),
+            PathBuf::from("/run/gareth.sock")
         );
     }
 
@@ -152,7 +152,7 @@ mod tests {
     fn falls_back_to_the_runtime_dir() {
         assert_eq!(
             socket_path_from(None, Some("/run/user/1000")),
-            PathBuf::from("/run/user/1000/netero.trace.sock")
+            PathBuf::from("/run/user/1000/gareth.trace.sock")
         );
     }
 
