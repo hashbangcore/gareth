@@ -1,8 +1,7 @@
 # Introduction
 
 Gareth is a CLI for LLMs, oriented toward advanced GNU/Linux users.
-It runs from the command line, integrates into pipelines,
-and offers a minimal chat with command expansion.
+It runs from the command line and integrates into pipelines.
 
 **Also in Spanish:** [View README in Spanish](./docs/es/)
 
@@ -58,9 +57,6 @@ If there is input from `stdin`, it is added as additional context.
 
 ### Commands
 
-* `chat`
-  Opens a minimal chat session.
-
 * `commit`
   Generates a commit message from staged changes.
 
@@ -101,82 +97,7 @@ gareth --trace
 
 ---
 
-## Interactive Chat
-
-### Built-in Commands
-
-* `/help`
-  Displays help.
-
-* `/clean`
-  Clears chat history.
-
-* `/add`
-  Attaches files to the context.
-
-* `/eval`
-  Evaluates an arithmetic expression.
-
-* `/save`
-  Saves the user request to a file.
-
-* `/stream`
-  Enables or disables streaming mode in the model response.
-
----
-
-### Inline Command Execution
-
-You can execute any valid shell command using:
-
-```
-#!(...)
-```
-
-The command output will be attached to the next prompt sent to the model.
-
-Example:
-
-```sh
-➜ #!(sudo nmap scanme.nmap.org) analyze
-```
-
-The generated prompt would be similar to:
-
-```text
-:: END CHAT HISTORY (SYSTEM) ::
-:: COMMAND OUTPUT (SYSTEM) ::
-[section]
-[command]
-sudo nmap scanme.nmap.org
-
-[stdout]
-...
-[end section]
-:: END COMMAND OUTPUT (SYSTEM) ::
-:: USER MESSAGE ::
-analyze
-:: END USER MESSAGE ::
-:: RESPONSE ::
-The command `sudo nmap scanme.nmap.org` completed a successful scan of the host `scanme.nmap.org` (IPv4: 45.33.32.156, IPv6: 2600:3c01::f03c:91ff:fe18:bb2f). Four open ports and one filtered port were detected:
-
-- **Open ports**:
-  - 22/tcp (SSH)
-  - 80/tcp (HTTP)
-  - 9929/tcp (nping-echo)
-  - 31337/tcp (Elite)
-
-- **Filtered port**:
-  - 646/tcp (LDP)
-
-The scan took 4.89 seconds. No critical errors were found.
-```
-
-⚠ Commands are executed in the user's shell without sandboxing.
-
----
-
-## Using Paths in Prompts
+## Paths in Prompts
 
 Gareth automatically detects absolute and relative paths in the prompt.
 
@@ -192,27 +113,7 @@ No special commands are required.
 
 ---
 
-### In `chat` Mode
-
-Within an interactive session:
-
-```sh
-gareth chat
-```
-
-You can write:
-
-```
-Review this file and suggest improvements: ./src/main.rs
-```
-
-If `./src/main.rs` exists and is a file, its contents will be automatically attached to the prompt.
-
----
-
-### In Direct Prompt Mode
-
-It also works from the command line:
+### In a Prompt
 
 ```sh
 gareth "Translate this file ./README.en.md"
@@ -315,25 +216,6 @@ gareth "Describe the CFS scheduling algorithm"
 
 ```sh
 gareth completion bash
-```
-
----
-
-### 11. Start interactive session
-
-```sh
-gareth chat
-```
-
----
-
-### 12. Execute command inside chat
-
-Within the session:
-
-```
-Analyze this output:
-#!(free -h)
 ```
 
 ---

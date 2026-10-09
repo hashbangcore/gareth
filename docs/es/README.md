@@ -1,8 +1,7 @@
 # Introducción
 
 Gareth es un CLI para LLMs, orientado a usuarios avanzados de GNU/Linux.
-Funciona desde la línea de comandos, se integra en pipelines y
-ofrece un chat minimalista con expansión de comandos.
+Funciona desde la línea de comandos y se integra en pipelines.
 
 **También en inglés:** [Ver README en inglés](../../)
 
@@ -58,9 +57,6 @@ Si hay entrada por `stdin`, se agrega como contexto adicional.
 
 ### Comandos
 
-* `chat`
-  Abre una sesión de chat minimalista.
-
 * `commit`
   Genera un mensaje de commit a partir de los cambios en *staging*.
 
@@ -101,82 +97,7 @@ gareth --trace
 
 ---
 
-## Chat interactivo
-
-### Comandos integrados
-
-* `/help`
-  Muestra la ayuda.
-
-* `/clean`
-  Limpia el historial del chat.
-
-* `/add`
-  Adjunta archivos al contexto.
-
-* `/eval`
-  Evalúa una expresión aritmética.
-
-* `/save`
-  Guarda la solicitud del usuario en un archivo.
-
-* `/stream`
-  Activa o desactiva el modo *streaming* en la respuesta del modelo.
-
----
-
-### Ejecución de comandos en línea
-
-Puedes ejecutar cualquier comando válido en la shell usando:
-
-```
-#!(...)
-```
-
-El resultado del comando se adjuntará en el siguiente prompt enviado al modelo.
-
-Ejemplo:
-
-```sh
-➜ #!(sudo nmap scanme.nmap.org) analiza
-```
-
-El prompt generado sería similar a:
-
-```text
-:: END HISTORIAL CHAT (SYSTEM) ::
-:: COMMAND OUTPUT (SYSTEM) ::
-[section]
-[command]
-sudo nmap scanme.nmap.org
-
-[stdout]
-...
-[end section]
-:: END COMMAND OUTPUT (SYSTEM) ::
-:: USER MESSAGE ::
-analiza
-:: END USER MESSAGE ::
-:: RESPONSE ::
-El comando `sudo nmap scanme.nmap.org` completó un escaneo exitoso del host `scanme.nmap.org` (IPv4: 45.33.32.156, IPv6: 2600:3c01::f03c:91ff:fe18:bb2f). Se detectaron 4 puertos abiertos y 1 puerto filtrado:
-
-- **Puertos abiertos**:
-  - 22/tcp (SSH)
-  - 80/tcp (HTTP)
-  - 9929/tcp (nping-echo)
-  - 31337/tcp (Elite)
-
-- **Puerto filtrado**:
-  - 646/tcp (LDP)
-
-El escaneo tardó 4.89 segundos. No se encontraron errores críticos.
-```
-
-⚠ Los comandos se ejecutan en la shell del usuario sin sandbox.
-
----
-
-## Uso de rutas en prompts
+## Rutas en prompts
 
 Gareth detecta automáticamente rutas absolutas y relativas en el prompt.
 
@@ -192,27 +113,7 @@ No es necesario usar comandos especiales.
 
 ---
 
-### En modo `chat`
-
-Dentro de una sesión interactiva:
-
-```sh
-gareth chat
-```
-
-Puedes escribir:
-
-```
-Revisa este archivo y sugiere mejoras: ./src/main.rs
-```
-
-Si `./src/main.rs` existe y es un fichero, su contenido se adjuntará al prompt automáticamente.
-
----
-
-### En modo prompt directo
-
-También funciona desde la línea de comandos:
+### En un prompt
 
 ```sh
 gareth "Traduce este fichero ./README.en.md"
@@ -316,25 +217,6 @@ gareth "Describe el algoritmo de scheduling CFS"
 
 ```sh
 gareth completion bash
-```
-
----
-
-### 11. Iniciar sesión interactiva
-
-```sh
-gareth chat
-```
-
----
-
-### 12. Ejecutar comando dentro del chat
-
-Dentro de la sesión:
-
-```
-Analiza esta salida:
-#!(free -h)
 ```
 
 ---
