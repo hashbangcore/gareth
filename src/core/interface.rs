@@ -39,14 +39,10 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Generate a commit message
-    Commit {
-        /// Optional prompt used as commit context
-        #[arg(trailing_var_arg = true)]
-        hint: Vec<String>,
-        /// Path to a custom commit convention file
-        #[arg(short = 'c', long, env = "GARETH_CONVENTION")]
-        convention: Option<String>,
+    /// Work with the current repository
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommands,
     },
 
     /// Process a single prompt
@@ -57,4 +53,17 @@ pub enum Commands {
 
     /// Generate shell completion
     Completion { shell: clap_complete::Shell },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RepoCommands {
+    /// Generate a commit message
+    Commit {
+        /// Optional prompt used as commit context
+        #[arg(trailing_var_arg = true)]
+        hint: Vec<String>,
+        /// Path to a custom commit convention file
+        #[arg(short = 'c', long, env = "GARETH_CONVENTION")]
+        convention: Option<String>,
+    },
 }

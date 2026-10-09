@@ -44,14 +44,8 @@ async fn execute(
     stdin: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match &args.command {
-        Some(core::Commands::Commit { hint, convention }) => {
-            let hint_text = if hint.is_empty() {
-                None
-            } else {
-                Some(hint.join(" "))
-            };
-            agent::commit::dispatch(service, args, hint_text.as_deref(), convention.as_deref())
-                .await?
+        Some(core::Commands::Repo { command }) => {
+            agent::repo::dispatch(service, args, command).await?
         }
         Some(core::Commands::Prompt { input }) => {
             let input_text = input.join(" ");

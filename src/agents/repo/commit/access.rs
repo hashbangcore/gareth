@@ -1,7 +1,8 @@
 use crate::core;
+use crate::util::section;
 
-use super::git::staged_changes;
-use super::utils::{comment, cover, normalize_commit_message, prompt as prompt_for};
+use super::utils::{comment, normalize_commit_message, prompt as prompt_for};
+use crate::agents::repo::git::staged_changes;
 
 fn template(hint: Option<&str>, convention_text: &str) -> String {
     // Build a single prompt with all required sections.
@@ -21,7 +22,7 @@ fn template(hint: Option<&str>, convention_text: &str) -> String {
 
     sections
         .iter()
-        .map(|(title, content)| cover(title, content))
+        .map(|(title, content)| section(title, content))
         .collect::<Vec<_>>()
         .join("\n\n")
 }

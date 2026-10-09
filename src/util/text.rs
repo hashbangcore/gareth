@@ -57,6 +57,12 @@ pub fn looks_like_path(token: &str) -> bool {
         || token.starts_with("~/")
 }
 
+/// Wraps a block in section markers so the model can parse it apart.
+pub fn section(title: &str, content: &str) -> String {
+    let title = title.to_uppercase();
+    format!(":: {title} ::\n{content}\n:: END {title} ::")
+}
+
 /// Prefixes every line of a block, preserving its trailing newline.
 pub fn indent_block(content: &str, prefix: &str) -> String {
     if content.is_empty() {
@@ -125,5 +131,18 @@ mod tests {
     #[test]
     fn indents_blank_lines_too() {
         assert_eq!(indent_block("uno\n\ndos", "  "), "  uno\n  \n  dos");
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::section;
+
+    #[test]
+    fn wraps_content_in_uppercase_markers() {
+        assert_eq!(
+            section("user hint", "hola"),
+            ":: USER HINT ::\nhola\n:: END USER HINT ::"
+        );
     }
 }

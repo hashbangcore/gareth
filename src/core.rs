@@ -7,5 +7,5 @@ mod stream;
 /// Trace server for raw LLM traffic.
 pub mod trace;
 
-pub use interface::{Cli, Commands};
+pub use interface::{Cli, Commands, RepoCommands};
 pub use router::Service;
