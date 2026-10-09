@@ -1,22 +1,9 @@
 use std::env;
 use std::fs;
 
+pub use super::files::Attachment;
+use super::files::expand_path;
 use super::text::{indent_block, looks_like_path, split_args};
-
-/// File attachment extracted from user input.
-pub struct Attachment {
-    /// Path as written by the user (not expanded).
-    pub path: String,
-    pub content: String,
-}
-
-/// Expands a leading `~/` into the given home directory.
-fn expand_path(path: &str, home: Option<&str>) -> String {
-    match (path.strip_prefix("~/"), home) {
-        (Some(rest), Some(home)) => format!("{}/{}", home, rest),
-        _ => path.to_string(),
-    }
-}
 
 /// Reads a path only when it is a regular file, ignoring directories and pipes.
 fn read_regular_file(path: &str) -> Option<String> {

@@ -16,11 +16,6 @@ pub fn get_stdin() -> io::Result<String> {
     read_stdin(stdin)
 }
 
-/// Returns true when stdin comes from a pipe.
-pub fn stdin_is_piped() -> bool {
-    !io::stdin().is_terminal()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
