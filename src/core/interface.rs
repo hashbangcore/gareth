@@ -39,9 +39,6 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Open a minimal chat session
-    Chat,
-
     /// Generate a commit message
     Commit {
         /// Optional prompt used as commit context

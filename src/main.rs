@@ -16,7 +16,6 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let stdin_is_piped = util::stdin_is_piped();
     let stdin = util::get_stdin()?;
     let args = core::Cli::parse();
 
@@ -36,14 +35,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let service = core::Service::new(&args)?;
 
-    execute(&service, &args, stdin, stdin_is_piped).await
+    execute(&service, &args, stdin).await
 }
 
 async fn execute(
     service: &core::Service,
     args: &core::Cli,
     stdin: String,
-    stdin_is_piped: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match &args.command {
         Some(core::Commands::Commit { hint, convention }) => {
@@ -59,16 +57,13 @@ async fn execute(
             let input_text = input.join(" ");
             agent::pipeline::dispatch(service, args, &input_text, stdin).await?
         }
-        Some(core::Commands::Chat) => {
-            agent::chat::dispatch(service, args, stdin, stdin_is_piped).await
-        }
         Some(core::Commands::Completion { shell }) => {
             let mut cmd = core::Cli::command();
             generate(*shell, &mut cmd, "gareth", &mut std::io::stdout());
         }
         None => {
             if args.prompt.is_empty() {
-                agent::chat::dispatch(service, args, stdin, stdin_is_piped).await;
+                core::Cli::command().print_help()?;
             } else {
                 let prompt_text = args.prompt.join(" ");
                 agent::pipeline::dispatch(service, args, &prompt_text, stdin).await?;
