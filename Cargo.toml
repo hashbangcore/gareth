@@ -1,7 +1,7 @@
 [package]
 authors = ["Hash <hashbangcore@duck.com>"]
 categories = ["command-line-utilities"]
-description = "A CLI for LLMs, built for advanced GNU/Linux users."
+description = "LLM agent harness for pipelines."
 edition = "2024"
 keywords = ["cli", "llm", "linux"]
 license = "BSD-2-Clause"
