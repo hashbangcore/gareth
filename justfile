@@ -21,8 +21,8 @@ release-build:
 error:
     cargo run --bin gareth -- "hi" > error.txt 2>&1
 
-commit hint="":
-    gareth repo commit {{ if hint != "" {"--hint " + hint } else {""} }} | git commit -F - --edit
+commit *hint="":
+    gareth repo commit {{ if hint != "" {"--hint " + quote(hint) } else {""} }} | git commit -F - --edit
 
 install:
     cargo install --path . --bin gareth
