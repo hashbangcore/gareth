@@ -49,22 +49,6 @@ pub fn extract_attachments_from_input(input: &str) -> Vec<Attachment> {
     attachments
 }
 
-/// Formats attachments into a single block, compatible with stdin attachments.
-pub fn format_attachments(attachments: &[Attachment]) -> Option<String> {
-    if attachments.is_empty() {
-        return None;
-    }
-    let mut out = String::new();
-    for attachment in attachments {
-        out.push_str("\n-- FILE: ");
-        out.push_str(&attachment.path);
-        out.push_str(" --\n");
-        out.push_str(&attachment.content);
-        out.push('\n');
-    }
-    Some(out)
-}
-
 /// Formats stdin and file attachments into a single attached files block.
 pub fn format_attached_files(stdin: Option<&str>, attachments: &[Attachment]) -> Option<String> {
     let mut sections = Vec::new();
@@ -154,20 +138,6 @@ mod tests {
             "/etc/hosts"
         );
         assert_eq!(expand_path("notas.txt", Some("/home/gareth")), "notas.txt");
-    }
-
-    #[test]
-    fn formats_attachments_as_file_blocks() {
-        assert!(format_attachments(&[]).is_none());
-
-        let attachments = vec![Attachment {
-            path: "notas.txt".to_string(),
-            content: "hola".to_string(),
-        }];
-        assert_eq!(
-            format_attachments(&attachments).as_deref(),
-            Some("\n-- FILE: notas.txt --\nhola\n")
-        );
     }
 
     #[test]

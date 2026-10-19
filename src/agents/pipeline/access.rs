@@ -30,10 +30,7 @@ pub async fn dispatch(
         terminal::print_labeled("USER", &prompt);
         terminal::print_labeled("LLM", response.trim());
     } else {
-        println!(
-            "{}",
-            terminal::render_markdown_with(&response, args.output_format())
-        );
+        println!("{}", terminal::render_markdown(&response));
     }
 
     Ok(())

@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 
-use super::text::{looks_like_path, split_args};
+use super::text::looks_like_path;
 
 /// Number of bytes inspected to decide whether a file holds text.
 const SNIFF_LEN: usize = 8192;
@@ -58,33 +58,6 @@ pub fn expand_path(path: &str, home: Option<&str>) -> String {
         (Some(rest), Some(home)) => format!("{}/{}", home, rest),
         _ => path.to_string(),
     }
-}
-
-/// Identifies the file paths mentioned in a string, in order of appearance.
-///
-/// Paths are returned exactly as written, duplicates are dropped, and the
-/// filesystem is never touched: a returned path is a candidate, not a
-/// guarantee. Use [`read_files`] to load them.
-pub fn find_paths(text: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for token in split_args(text) {
-        if looks_like_path(&token) && !found.contains(&token) {
-            found.push(token);
-        }
-    }
-    found
-}
-
-/// Reads one or more files, failing on the first one that cannot be read.
-///
-/// Every returned attachment keeps the path as it was written, while the
-/// filesystem is accessed through the expanded path.
-pub fn read_files(paths: &[&str]) -> Result<Vec<Attachment>, ReadError> {
-    let home = env::var("HOME").ok();
-    paths
-        .iter()
-        .map(|path| read_one(path, home.as_deref()))
-        .collect()
 }
 
 /// Decides whether a byte slice holds text.
@@ -172,21 +145,6 @@ pub fn resolve_value(value: &str) -> Result<Value, ReadError> {
     }
 }
 
-/// Reads a single path, reporting why it failed.
-fn read_one(path: &str, home: Option<&str>) -> Result<Attachment, ReadError> {
-    let bytes = read_bytes(path, home)?;
-
-    let content = String::from_utf8(bytes).map_err(|source| ReadError::Io {
-        path: path.to_string(),
-        source: io::Error::new(io::ErrorKind::InvalidData, source),
-    })?;
-
-    Ok(Attachment {
-        path: path.to_string(),
-        content,
-    })
-}
-
 /// Reads the bytes of a regular file, reporting why it failed.
 fn read_bytes(path: &str, home: Option<&str>) -> Result<Vec<u8>, ReadError> {
     let expanded = expand_path(path, home);
@@ -217,93 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_absolute_relative_and_home_paths() {
-        let found = find_paths("lee /etc/hosts y ./notas.txt y ~/pendientes.txt y nada");
-        assert_eq!(found, vec!["/etc/hosts", "./notas.txt", "~/pendientes.txt"]);
-    }
-
-    #[test]
-    fn finds_nothing_in_text_without_paths() {
-        assert!(find_paths("hola mundo").is_empty());
-        assert!(find_paths("").is_empty());
-        // A bare word is not a path even with a slash-looking tail.
-        assert!(find_paths("docs/").is_empty());
-    }
-
-    #[test]
-    fn keeps_the_path_as_written() {
-        assert_eq!(find_paths("mira ~/notas.txt"), vec!["~/notas.txt"]);
-    }
-
-    #[test]
-    fn drops_duplicates_keeping_order() {
-        let found = find_paths("./b.txt ./a.txt ./b.txt");
-        assert_eq!(found, vec!["./b.txt", "./a.txt"]);
-    }
-
-    #[test]
-    fn does_not_touch_the_filesystem() {
-        // Identifies candidates only: a path that does not exist is still returned.
-        assert_eq!(
-            find_paths("/definitely/not/here.txt"),
-            vec!["/definitely/not/here.txt"]
-        );
-    }
-
-    #[test]
-    fn reads_a_single_file() {
-        let path = temp_path("single.txt");
-        fs::write(&path, "contenido\n").unwrap();
-
-        let read = read_files(&[path.to_str().unwrap()]).unwrap();
-
-        assert_eq!(read.len(), 1);
-        assert_eq!(read[0].content, "contenido\n");
-        fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn reads_several_files_in_order() {
-        let first = temp_path("first.txt");
-        let second = temp_path("second.txt");
-        fs::write(&first, "uno").unwrap();
-        fs::write(&second, "dos").unwrap();
-
-        let read = read_files(&[first.to_str().unwrap(), second.to_str().unwrap()]).unwrap();
-
-        assert_eq!(read.len(), 2);
-        assert_eq!(read[0].content, "uno");
-        assert_eq!(read[1].content, "dos");
-        fs::remove_file(&first).unwrap();
-        fs::remove_file(&second).unwrap();
-    }
-
-    #[test]
-    fn reports_a_missing_file() {
-        let err = read_files(&["/definitely/not/here.txt"]).unwrap_err();
-        assert!(matches!(err, ReadError::NotFound(_)));
-        assert_eq!(err.to_string(), "/definitely/not/here.txt: no such file");
-    }
-
-    #[test]
-    fn reports_a_directory() {
-        let dir = std::env::temp_dir();
-        let err = read_files(&[dir.to_str().unwrap()]).unwrap_err();
-        assert!(matches!(err, ReadError::NotAFile(_)));
-        assert!(err.to_string().ends_with(": not a regular file"));
-    }
-
-    #[test]
-    fn fails_on_the_first_unreadable_file() {
-        let good = temp_path("good.txt");
-        fs::write(&good, "ok").unwrap();
-
-        let err = read_files(&["/definitely/not/here.txt", good.to_str().unwrap()]).unwrap_err();
-        assert!(matches!(err, ReadError::NotFound(_)));
-        fs::remove_file(&good).unwrap();
-    }
-
-    #[test]
     fn expands_home_against_the_real_environment() {
         // Only meaningful when a home directory is set, which it always is here.
         let home = env::var("HOME").unwrap();
@@ -314,7 +185,7 @@ mod tests {
     #[test]
     fn read_errors_expose_their_source() {
         use std::error::Error;
-        let err = read_files(&[std::env::temp_dir().to_str().unwrap()]).unwrap_err();
+        let err = resolve_value(std::env::temp_dir().to_str().unwrap()).unwrap_err();
         // NotAFile carries no underlying error.
         assert!(err.source().is_none());
 

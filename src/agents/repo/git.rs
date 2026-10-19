@@ -1,4 +1,4 @@
-use crate::util::shell::{Shell, run_shell};
+use crate::util::shell::run_shell;
 
 /// Collects git status and staged diff to give context to the model.
 pub fn staged_changes() -> String {
@@ -12,7 +12,7 @@ pub fn run_commands(commands: &[&str]) -> String {
     let mut sections = Vec::with_capacity(commands.len());
 
     for cmd_str in commands {
-        let out = run_shell(cmd_str, Shell::Posix);
+        let out = run_shell(cmd_str);
         sections.push(match &out.error {
             Some(err) => format!(
                 "[section]\n[command]\n{}\n[error]\n{}\n[end section]",

@@ -37,8 +37,6 @@ struct Message {
 struct ChatRequest {
     model: String,
     messages: Vec<Message>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -68,8 +66,6 @@ pub enum ServiceError {
     },
     /// The response body could not be read.
     Read { source: reqwest::Error },
-    /// Writing the streamed answer to the terminal failed.
-    Write { source: std::io::Error },
     /// The endpoint answered with a non-success status.
     Http {
         status: u16,
@@ -100,9 +96,6 @@ impl fmt::Display for ServiceError {
             }
             Self::Read { source } => {
                 write!(f, "the response was cut short while reading ({source})")
-            }
-            Self::Write { source } => {
-                write!(f, "could not write the response ({source})")
             }
             Self::Http {
                 status,
@@ -142,7 +135,6 @@ impl Error for ServiceError {
         match self {
             Self::Client { source } | Self::Read { source } => Some(source),
             Self::Transport { source, .. } => Some(source),
-            Self::Write { source } => Some(source),
             _ => None,
         }
     }
@@ -169,20 +161,14 @@ impl Service {
         })
     }
 
-    /// Returns the configured endpoint.
-    pub(crate) fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-
-    /// Builds a chat completion request, optionally in streaming mode.
-    pub(crate) fn request(&self, content: &str, stream: Option<bool>) -> reqwest::RequestBuilder {
+    /// Builds a chat completion request.
+    pub(crate) fn request(&self, content: &str) -> reqwest::RequestBuilder {
         let body = ChatRequest {
             model: self.model.clone(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: content.to_string(),
             }],
-            stream,
         };
 
         let mut req = self.http.post(&self.endpoint).json(&body);
@@ -197,7 +183,7 @@ impl Service {
         send_trace(":: REQUEST ::", content).await;
 
         let response =
-            self.request(content, None)
+            self.request(content)
                 .send()
                 .await
                 .map_err(|source| ServiceError::Transport {

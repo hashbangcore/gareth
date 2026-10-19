@@ -4,7 +4,7 @@
 //!
 //! - [`shell`]: running shell commands and capturing their output.
 //! - [`terminal`]: rendering and printing model output for the terminal.
-//! - [`files`]: reading files from disk and finding file paths in text.
+//! - [`files`]: reading files from disk and deciding whether they hold text.
 //! - [`attach`]: turning attachments into prompt context blocks.
 //! - [`text`]: tokenizing, path detection, block indentation and prompt sections.
 //! - [`env`]: environment variables.
@@ -19,4 +19,4 @@ pub mod terminal;
 pub mod text;
 
 pub use io::get_stdin;
-pub use text::{looks_like_path, section, split_args};
+pub use text::section;
