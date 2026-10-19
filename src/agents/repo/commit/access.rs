@@ -4,6 +4,7 @@ use crate::util::section;
 
 use super::utils::{comment, normalize_commit_message, prompt as prompt_for};
 use crate::agents::repo::git::staged_changes;
+use std::path::Path;
 
 fn template(
     hint: Option<&str>,
@@ -45,6 +46,28 @@ fn resolve_text(value: Option<&str>) -> Result<Option<String>, files::ReadError>
         .filter(|text| !text.trim().is_empty()))
 }
 
+/// Fails when a file does not exist, so a typo is not read as "no changes".
+fn check_files(files: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    for file in files {
+        if !Path::new(file).exists() {
+            return Err(format!("{file}: no such file").into());
+        }
+    }
+    Ok(())
+}
+
+/// Builds the repository status, noting the files it was limited to.
+fn status_text(files: &[String]) -> String {
+    let changes = staged_changes(files);
+    if files.is_empty() {
+        return changes;
+    }
+    format!(
+        "Only the changes under the selected files are shown: {}\n\n{changes}",
+        files.join(", ")
+    )
+}
+
 /// Builds a commit prompt, calls the model, and prints the final message.
 pub async fn dispatch(
     service: &core::Service,
@@ -52,12 +75,15 @@ pub async fn dispatch(
     hint: Option<&str>,
     context: Option<&str>,
     convention_path: Option<&str>,
+    files: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let convention_text = if let Some(path) = convention_path {
         std::fs::read_to_string(path)?
     } else {
         prompt_for("convention")
     };
+
+    check_files(files)?;
 
     let hint = resolve_text(hint)?;
     let context = resolve_text(context)?;
@@ -66,7 +92,7 @@ pub async fn dispatch(
         hint.as_deref(),
         context.as_deref(),
         &convention_text,
-        &staged_changes(),
+        &status_text(files),
     );
 
     if args.verbose {
@@ -88,7 +114,7 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_text, template};
+    use super::{check_files, resolve_text, status_text, template};
 
     const CONVENTION: &str = "feat: new user-visible functionality";
     const STATUS: &str = "no staged changes";
@@ -150,5 +176,25 @@ mod tests {
         let resolved = resolve_text(Some(path.to_str().unwrap())).unwrap();
         assert!(resolved.is_none());
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn notes_the_files_the_status_was_limited_to() {
+        let status = status_text(&["src/a.rs".to_string(), "src/b.rs".to_string()]);
+        assert!(status.starts_with(
+            "Only the changes under the selected files are shown: src/a.rs, src/b.rs"
+        ));
+    }
+
+    #[test]
+    fn does_not_note_any_file_when_the_whole_index_is_described() {
+        let status = status_text(&[]);
+        assert!(!status.contains("Only the changes under the selected files"));
+    }
+
+    #[test]
+    fn refuses_a_file_that_does_not_exist() {
+        let err = check_files(&["gareth-no-existe-jamas.txt".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("no such file"), "err was {err}");
     }
 }

@@ -4,7 +4,7 @@ mod util;
 
 use agents as agent;
 use clap::CommandFactory;
-use clap::Parser;
+use clap::FromArgMatches;
 use clap_complete::generate;
 
 #[tokio::main]
@@ -17,7 +17,9 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = util::get_stdin()?;
-    let args = core::Cli::parse();
+    let matches = core::Cli::command().get_matches();
+    core::interface::check_commit_layout(&matches)?;
+    let args = core::Cli::from_arg_matches(&matches)?;
 
     if args.trace && (args.command.is_some() || !args.prompt.is_empty()) {
         let mut cmd = core::Cli::command();

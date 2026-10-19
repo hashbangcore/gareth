@@ -18,6 +18,7 @@ pub async fn dispatch(
             hint,
             context,
             convention,
+            files,
         } => {
             commit_dispatch(
                 service,
@@ -25,6 +26,7 @@ pub async fn dispatch(
                 hint.as_deref(),
                 context.as_deref(),
                 convention.as_deref(),
+                files,
             )
             .await
         }
