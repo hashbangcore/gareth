@@ -1,23 +1,24 @@
-# Introducción
+# Gareth
 
-Gareth es un CLI para LLMs, orientado a usuarios avanzados de GNU/Linux.
-Funciona desde la línea de comandos y se integra en pipelines.
+Gareth es una herramienta de línea de comandos para modelos de lenguaje.
+Envía un prompt a un endpoint compatible con OpenAI e imprime la respuesta.
 
-**También en inglés:** [Ver README en inglés](../../)
+Está pensada para usarse en pipelines: la respuesta va a la salida estándar y
+el prompt se puede escribir en línea o por tubería.
+
+**También en inglés:** [Leer el README en inglés](../../)
 
 ---
 
 ## Instalación
 
-Gareth se puede instalar de varias formas:
-
-### Usando Cargo
+### Cargo
 
 ```bash
 cargo install gareth
 ```
 
-### Usando Nix Flakes
+### Nix flakes
 
 ```bash
 nix profile add github:hashbangcore/gareth
@@ -25,10 +26,9 @@ nix profile add github:hashbangcore/gareth
 
 ---
 
-## Variables de entorno
+## Configuración
 
-Gareth es agnóstico respecto al proveedor: habla con cualquier endpoint compatible con OpenAI y
-no incluye ningún proveedor por defecto, así que el destino se indica por configuración.
+Gareth no incluye ningún proveedor. El destino se indica por entorno:
 
 * `GARETH_URL` (obligatoria)
   URL del endpoint de *chat completions*.
@@ -40,160 +40,145 @@ no incluye ningún proveedor por defecto, así que el destino se indica por conf
   Clave API, que se envía como bearer token cuando el endpoint la pide.
 
 * `GARETH_TRACE_SOCKET` (opcional)
-  Ruta del socket de depuración de `--trace`. Por defecto
-  `$XDG_RUNTIME_DIR/gareth.trace.sock`, o `/tmp/gareth.trace.sock`.
+  Ruta del socket de traza. Por defecto `$XDG_RUNTIME_DIR/gareth.trace.sock`,
+  o `/tmp/gareth.trace.sock`.
 
 ---
 
 ## Uso
 
 ```
-Uso: gareth [OPCIONES] [PROMPT] [COMANDO]
+Usage: gareth [OPTIONS] [PROMPT]... [COMMAND]
 ```
-
-Si hay entrada por `stdin`, se agrega como contexto adicional.
 
 ---
 
 ### Comandos
 
-* `commit`
-  Genera un mensaje de commit a partir de los cambios en *staging*.
-
-* `completion`
-  Genera scripts de autocompletado para la shell.
+* `repo commit`
+  Genera un mensaje de commit a partir de los cambios del repositorio.
 
 * `prompt`
-  Envía un prompt al modelo y muestra la respuesta.
+  Envía un prompt al modelo e imprime la respuesta.
 
----
-
-### Argumentos
-
-* `[PROMPT]`
-  Prompt enviado al modelo.
+* `completion`
+  Genera scripts de completado para el shell.
 
 ---
 
 ### Opciones
 
 * `-v, --verbose`
-  Habilita la salida detallada.
+  Imprime el prompt enviado y la respuesta recibida.
 
 * `-t, --trace`
-  Muestra los prompts enviados y las respuestas recibidas (modo depuración).
+  Levanta un servidor de traza que imprime el tráfico de todas las instancias
+  en marcha.
 
 * `-h, --help`
-  Muestra la ayuda.
+  Imprime la ayuda.
 
 * `-V, --version`
-  Muestra la versión.
-
-Puedes usar la opción `--trace` para revisar los prompts que se envían:
-
-```
-gareth --trace
-```
+  Imprime la versión.
 
 ---
 
-## Rutas en prompts
+### El prompt
 
-Gareth detecta automáticamente rutas absolutas y relativas en el prompt.
-
-Cualquier palabra que:
-
-* Comience con `/` (ruta absoluta)
-* Comience con `./` o `../` (ruta relativa)
-* Y corresponda a un **archivo existente**
-
-será interpretada como ruta válida y su contenido se adjuntará automáticamente al contexto enviado al modelo.
-
-No es necesario usar comandos especiales.
-
----
-
-### En un prompt
+El prompt es el texto que se pasa como argumentos, el texto que se lee de la
+entrada estándar, o ambos:
 
 ```sh
-gareth "Traduce este fichero ./README.en.md"
+gareth "Explain how io_uring works in Linux"
 ```
-
-Si `./README.en.md` existe, su contenido se incluirá automáticamente en el contexto antes de enviar la solicitud al modelo.
-
----
-
-### Comportamiento
-
-* Solo se adjuntan archivos existentes.
-* No se adjuntan directorios.
-* Se pueden incluir múltiples rutas en un mismo prompt.
-* Las rutas se resuelven desde el directorio actual.
-
----
-
-## Ejemplos
-
-### 1. Prompt directo
 
 ```sh
-gareth "Explica cómo funciona io_uring en Linux"
+cat Cargo.toml | gareth "Describe the main dependencies"
 ```
 
 ---
 
-### 2. Prompt sin comillas
+## Generar mensajes de commit
+
+`gareth repo commit` lee los cambios del repositorio, los envía al modelo e
+imprime un mensaje de commit.
 
 ```sh
-gareth Explica el modelo de ownership en Rust
+gareth repo commit | git commit -F -
 ```
 
----
-
-### 3. Usando `stdin` como contexto
+El mensaje se escribe en la salida estándar, así que se puede revisar antes de
+usarlo:
 
 ```sh
-cat Cargo.toml | gareth "Describe las dependencias principales"
+gareth repo commit | less
 ```
 
 ---
 
-### 4. Analizando salida de un comando
+### Seleccionar los cambios
+
+Sin argumentos se describe el índice completo: los cambios que están en el
+área de preparación son aquellos para los que se escribe el mensaje.
+
+Con argumentos de fichero, solo se describen esas rutas. Los cambios medidos
+son los que `git commit` commitearía para esas rutas, es decir, el árbol de
+trabajo contra `HEAD`:
 
 ```sh
-dmesg | tail -n 50 | gareth "¿Hay errores relevantes en estos logs?"
+gareth repo commit src/main.rs | git commit src/main.rs -F -
 ```
-
----
-
-### 5. Generar mensaje de commit desde staging
 
 ```sh
-gareth commit | git commit -F -
+gareth repo commit src tests | git commit src tests -F -
 ```
+
+Los directorios se aceptan y seleccionan todo lo que hay debajo.
 
 ---
 
-### 6. Generar mensaje con convención personalizada
+### Añadir contexto
+
+Dos opciones añaden contexto al prompt. Ambas aceptan un texto o la ruta de
+un fichero de texto, y ambas son opcionales:
+
+* `--hint`
+  Contexto extra sobre el cambio, escrito por quien lo hace.
+
+* `--context`
+  Descripción del proyecto al que pertenecen los cambios.
 
 ```sh
-gareth commit -c .repo/convencion.txt
+gareth repo commit --hint "se borra el código que había sobrado"
 ```
-
----
-
-### 7. Modo verbose
 
 ```sh
-gareth -v "Explica qué es un mutex en Rust"
+gareth repo commit --context ./AGENTS.md
+```
+
+Un fichero que no contiene texto se rechaza, y un fichero que no existe se
+informa como tal.
+
+Las opciones pueden ir antes o después de los argumentos de fichero, pero los
+argumentos de fichero tienen que ir juntos.
+
+---
+
+### La convención
+
+Los tipos y los scopes del commit los define un fichero de convención. Sin
+fichero se usa la convención integrada.
+
+```sh
+gareth repo commit -c .repo/convention.txt
 ```
 
 ---
 
-### 8. Inspeccionar prompts enviados (modo depuración)
+## Traza
 
-Gareth ejecuta un socket de depuración que escucha todos los prompts enviados
-por instancias en ejecución.
+`gareth --trace` levanta un socket que recibe los prompts y las respuestas de
+todas las instancias en marcha, y los va imprimiendo.
 
 ```sh
 gareth --trace
@@ -201,19 +186,7 @@ gareth --trace
 
 ---
 
-### 9. Usar proveedor personalizado
-
-```sh
-export GARETH_URL="https://api.example.com/v1/chat/completions"
-export GARETH_MODEL="modelo"
-export GARETH_API_KEY="api-key"
-
-gareth "Describe el algoritmo de scheduling CFS"
-```
-
----
-
-### 10. Generar autocompletado para la shell
+## Completado del shell
 
 ```sh
 gareth completion bash
