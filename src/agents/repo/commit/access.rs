@@ -3,8 +3,7 @@ use crate::util::files;
 use crate::util::section;
 
 use super::utils::{comment, normalize_commit_message, prompt as prompt_for};
-use crate::agents::repo::git::staged_changes;
-use std::path::Path;
+use crate::agents::repo::git::{check_files, staged_changes};
 
 fn template(
     hint: Option<&str>,
@@ -46,26 +45,30 @@ fn resolve_text(value: Option<&str>) -> Result<Option<String>, files::ReadError>
         .filter(|text| !text.trim().is_empty()))
 }
 
-/// Fails when a file does not exist, so a typo is not read as "no changes".
-fn check_files(files: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    for file in files {
-        if !Path::new(file).exists() {
-            return Err(format!("{file}: no such file").into());
-        }
+/// Tells the model that the changes are limited to some files.
+fn note(files: &[String]) -> String {
+    if files.is_empty() {
+        return String::new();
     }
-    Ok(())
+    format!(
+        "Only the changes under the selected files are shown: {}",
+        files.join(", ")
+    )
 }
 
 /// Builds the repository status, noting the files it was limited to.
-fn status_text(files: &[String]) -> String {
-    let changes = staged_changes(files);
-    if files.is_empty() {
-        return changes;
+///
+/// `Ok(None)` means there is nothing to describe.
+fn status_text(files: &[String]) -> Result<Option<String>, String> {
+    let Some(changes) = staged_changes(files)? else {
+        return Ok(None);
+    };
+
+    let note = note(files);
+    if note.is_empty() {
+        return Ok(Some(changes));
     }
-    format!(
-        "Only the changes under the selected files are shown: {}\n\n{changes}",
-        files.join(", ")
-    )
+    Ok(Some(format!("{note}\n\n{changes}")))
 }
 
 /// Builds a commit prompt, calls the model, and prints the final message.
@@ -88,11 +91,16 @@ pub async fn dispatch(
     let hint = resolve_text(hint)?;
     let context = resolve_text(context)?;
 
+    // Nothing to describe: gareth says so, without asking the model.
+    let Some(status) = status_text(files)? else {
+        return Err("no changes staged for commit".into());
+    };
+
     let prompt = template(
         hint.as_deref(),
         context.as_deref(),
         &convention_text,
-        &status_text(files),
+        &status,
     );
 
     if args.verbose {
@@ -102,19 +110,19 @@ pub async fn dispatch(
     let result = service.complete(&prompt).await?;
     let result = normalize_commit_message(&result);
 
-    // TODO: manejar de forma más segura
+    // The model does not report the errors, but if it does the commit stops.
     if result.contains("Error: no changes staged for commit") {
-        println!("{}", result);
-    } else {
-        println!("{}\n\n\n{}", result.trim_end(), comment(&convention_text));
+        return Err("no changes staged for commit".into());
     }
+
+    println!("{}\n\n\n{}", result.trim_end(), comment(&convention_text));
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{check_files, resolve_text, status_text, template};
+    use super::{note, resolve_text, template};
 
     const CONVENTION: &str = "feat: new user-visible functionality";
     const STATUS: &str = "no staged changes";
@@ -180,21 +188,15 @@ mod tests {
 
     #[test]
     fn notes_the_files_the_status_was_limited_to() {
-        let status = status_text(&["src/a.rs".to_string(), "src/b.rs".to_string()]);
-        assert!(status.starts_with(
+        let note = note(&["src/a.rs".to_string(), "src/b.rs".to_string()]);
+        assert_eq!(
+            note,
             "Only the changes under the selected files are shown: src/a.rs, src/b.rs"
-        ));
+        );
     }
 
     #[test]
     fn does_not_note_any_file_when_the_whole_index_is_described() {
-        let status = status_text(&[]);
-        assert!(!status.contains("Only the changes under the selected files"));
-    }
-
-    #[test]
-    fn refuses_a_file_that_does_not_exist() {
-        let err = check_files(&["gareth-no-existe-jamas.txt".to_string()]).unwrap_err();
-        assert!(err.to_string().contains("no such file"), "err was {err}");
+        assert!(note(&[]).is_empty());
     }
 }

@@ -6,8 +6,8 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// What a git command returned.
 struct GitOutput {
-    /// True when git finished successfully.
-    success: bool,
+    /// The exit code of git, if it finished.
+    code: Option<i32>,
     /// What git wrote to the standard output.
     stdout: String,
     /// What git wrote to the standard error.
@@ -30,23 +30,42 @@ where
 {
     match Command::new("git").args(args).output() {
         Ok(out) => GitOutput {
-            success: out.status.success(),
+            code: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         },
         Err(err) => GitOutput {
-            success: false,
+            code: None,
             stdout: String::new(),
             stderr: err.to_string(),
         },
     }
 }
 
+/// Builds the message that explains why git failed.
+fn failure(out: &GitOutput) -> String {
+    let message = out.stderr.trim();
+    if message.is_empty() {
+        "git failed".to_string()
+    } else {
+        message.to_string()
+    }
+}
+
+/// Fails when the working directory is not inside a repository.
+fn check_repository() -> Result<(), String> {
+    let out = git(["rev-parse", "--is-inside-work-tree"]);
+    if out.code != Some(0) {
+        return Err(failure(&out));
+    }
+    Ok(())
+}
+
 /// Returns the reference the changes are measured against.
 ///
 /// A repository without commits is measured against the empty tree.
 fn base() -> String {
-    if git(["rev-parse", "--verify", "--quiet", "HEAD"]).success {
+    if git(["rev-parse", "--verify", "--quiet", "HEAD"]).code == Some(0) {
         "HEAD".to_string()
     } else {
         EMPTY_TREE.to_string()
@@ -112,7 +131,12 @@ fn steps(files: &[String]) -> Vec<Step> {
 }
 
 /// Collects the changes to describe to the model.
-pub fn staged_changes(files: &[String]) -> String {
+///
+/// `Ok(None)` means there is nothing to describe. `Err` carries the message
+/// git reported, so the caller can stop before asking the model anything.
+pub fn staged_changes(files: &[String]) -> Result<Option<String>, String> {
+    check_repository()?;
+
     let steps = steps(files);
 
     let mut commands: Vec<String> = Vec::with_capacity(steps.len());
@@ -122,9 +146,16 @@ pub fn staged_changes(files: &[String]) -> String {
         commands.push(step.display.clone());
         let out = git(&step.args);
 
-        // The first command only asks whether there is anything to describe.
-        if index == 0 && out.success {
-            return section(&commands, "No staged changes");
+        if index == 0 {
+            // The first command only asks whether there is anything to describe.
+            // Git answers 1 when there are differences and fails above that.
+            match out.code {
+                Some(0) => return Ok(None),
+                Some(1) => {}
+                _ => return Err(failure(&out)),
+            }
+        } else if out.code != Some(0) {
+            return Err(failure(&out));
         }
 
         let mut output = out.stdout;
@@ -134,7 +165,23 @@ pub fn staged_changes(files: &[String]) -> String {
         outputs.push(output);
     }
 
-    section(&commands, &outputs.join("\n"))
+    Ok(Some(section(&commands, &outputs.join("\n"))))
+}
+
+/// Checks that the paths are known to git, the way `git commit <paths>` needs.
+pub fn check_files(files: &[String]) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let mut args: Vec<String> = vec!["ls-files".into(), "--error-unmatch".into(), "--".into()];
+    args.extend(files.iter().cloned());
+
+    let out = git(&args);
+    if out.code != Some(0) {
+        return Err(failure(&out));
+    }
+    Ok(())
 }
 
 /// Wraps a command list and its output in the markers the model reads.
@@ -144,4 +191,39 @@ fn section(commands: &[String], output: &str) -> String {
         commands.join("\n"),
         output.trim_end()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describes_the_index_when_no_files_are_given() {
+        let steps = steps(&[]);
+        assert_eq!(steps.len(), 3);
+        assert!(steps[1].args.contains(&"--staged".to_string()));
+        assert!(!steps[1].args.contains(&"--".to_string()));
+    }
+
+    #[test]
+    fn describes_the_files_when_they_are_given() {
+        let steps = steps(&["src/a.rs".to_string()]);
+        assert!(steps[1].args.contains(&"--".to_string()));
+        assert!(steps[1].args.contains(&"src/a.rs".to_string()));
+        assert!(steps[1].display.contains("'src/a.rs'"));
+    }
+
+    #[test]
+    fn accepts_an_empty_file_list() {
+        assert!(check_files(&[]).is_ok());
+    }
+
+    #[test]
+    fn refuses_a_path_that_git_does_not_know() {
+        let err = check_files(&["gareth-no-existe-jamas.txt".to_string()]).unwrap_err();
+        assert!(
+            err.contains("gareth-no-existe-jamas.txt") || err.contains("not a git repository"),
+            "err was {err}"
+        );
+    }
 }

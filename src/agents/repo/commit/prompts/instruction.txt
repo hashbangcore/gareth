@@ -1,9 +1,6 @@
 Your task is to generate a commit message based on the "STAGED CHANGES",
 "SKELETON" and "CONVENTION" sections provided.
 
-If no changes are staged, return exactly:
-- Error: no changes staged for commit
-
 Otherwise, generate a commit message following these rules:
 - Output exactly one commit message
 - Use imperative mode
