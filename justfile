@@ -22,7 +22,7 @@ error:
     cargo run --bin gareth -- "hi" > error.txt 2>&1
 
 commit hint="":
-    gareth repo commit "{{ hint }}" | git commit -F - --edit
+    gareth repo commit {{ if hint != "" {"--hint " + hint } else {""} }} | git commit -F - --edit
 
 install:
     cargo install --path . --bin gareth
