@@ -59,11 +59,58 @@ pub enum Commands {
 pub enum RepoCommands {
     /// Generate a commit message
     Commit {
-        /// Optional prompt used as commit context
-        #[arg(trailing_var_arg = true)]
-        hint: Vec<String>,
+        /// Hint text or path to a text file
+        #[arg(long)]
+        hint: Option<String>,
+        /// Project context text or path to a text file
+        #[arg(long)]
+        context: Option<String>,
         /// Path to a custom commit convention file
         #[arg(short = 'c', long, env = "GARETH_CONVENTION")]
         convention: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parses the arguments and returns the commit options.
+    fn commit_options(args: &[&str]) -> (Option<String>, Option<String>) {
+        let cli = Cli::try_parse_from(args).unwrap();
+        let Some(Commands::Repo {
+            command: RepoCommands::Commit { hint, context, .. },
+        }) = cli.command
+        else {
+            panic!("expected a commit command");
+        };
+        (hint, context)
+    }
+
+    #[test]
+    fn reads_the_hint_and_context_flags() {
+        let (hint, context) = commit_options(&[
+            "gareth",
+            "repo",
+            "commit",
+            "--hint",
+            "es un refactor",
+            "--context",
+            "proyecto rust",
+        ]);
+        assert_eq!(hint.as_deref(), Some("es un refactor"));
+        assert_eq!(context.as_deref(), Some("proyecto rust"));
+    }
+
+    #[test]
+    fn leaves_both_options_empty_when_omitted() {
+        let (hint, context) = commit_options(&["gareth", "repo", "commit"]);
+        assert!(hint.is_none());
+        assert!(context.is_none());
+    }
+
+    #[test]
+    fn no_longer_accepts_a_positional_hint() {
+        assert!(Cli::try_parse_from(["gareth", "repo", "commit", "es un refactor"]).is_err());
+    }
 }

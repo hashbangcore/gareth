@@ -14,9 +14,19 @@ pub async fn dispatch(
     command: &core::RepoCommands,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        core::RepoCommands::Commit { hint, convention } => {
-            let hint_text = (!hint.is_empty()).then(|| hint.join(" "));
-            commit_dispatch(service, args, hint_text.as_deref(), convention.as_deref()).await
+        core::RepoCommands::Commit {
+            hint,
+            context,
+            convention,
+        } => {
+            commit_dispatch(
+                service,
+                args,
+                hint.as_deref(),
+                context.as_deref(),
+                convention.as_deref(),
+            )
+            .await
         }
     }
 }
