@@ -1,6 +1,6 @@
 mod dist
 
-set unstable := true
+set unstable
 
 default: watch
 
@@ -21,8 +21,9 @@ release-build:
 error:
     cargo run --bin gareth -- "hi" > error.txt 2>&1
 
-commit *hint="":
-    gareth repo commit {{ if hint != "" {"--hint " + quote(hint) } else {""} }} | git commit -F - --edit
+hint := ""
+commit *files="":
+    gareth repo commit {{ if hint != "" { "--hint " + quote(hint) } else { "" } }} {{ files }} | git commit {{ files }} -F - --edit
 
 install:
     cargo install --path . --bin gareth
