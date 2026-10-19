@@ -1,4 +1,4 @@
-Your task is to generate a commit message based on the "STAGED CHANGES",
+Your task is to generate a commit message based on the "REPOSITORY STATUS",
 "SKELETON" and "CONVENTION" sections provided.
 
 Otherwise, generate a commit message following these rules:
@@ -19,9 +19,10 @@ Otherwise, generate a commit message following these rules:
 - Keep the commit subject short, direct, and technical, around 50 chars
 - Group related changes into a single bullet instead of one bullet per
   file
-- Add bullets only if they clarify key changes
+- Include a body of 2 to 4 bullets when the staged changes cover more than
+  one file or more than one logical change
+- Omit the body only when the staged changes are a single trivial edit
 - Do not repeat the subject in bullets
-- Do not repeat the CONVENTION section or any other section in your
-  output
+- Do not copy the CONVENTION section or the instructions of any section into
+  your output
 - Avoid unnecessary details, commentary, or explanations
-- For trivial or self-explanatory changes, return only the subject line

@@ -12,7 +12,10 @@ fn template(
     status_text: &str,
 ) -> String {
     let mut sections: Vec<(&str, String)> = vec![
-        ("INSTRUCTION", prompt_for("instruction")),
+        (
+            "INSTRUCTION",
+            instruction(hint.is_some(), context.is_some()),
+        ),
         ("CONVENTION", convention_text.to_string()),
         ("SKELETON", prompt_for("skeleton")),
     ];
@@ -32,6 +35,21 @@ fn template(
         .map(|(title, content)| section(title, content))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Builds the instructions, adding the ones of the sections that are given.
+fn instruction(has_hint: bool, has_context: bool) -> String {
+    let mut parts = vec![prompt_for("instruction").trim_end().to_string()];
+
+    if has_hint {
+        parts.push(prompt_for("hint").trim().to_string());
+    }
+
+    if has_context {
+        parts.push(prompt_for("context").trim().to_string());
+    }
+
+    parts.join("\n\n")
 }
 
 /// Resolves a value that may be text or a text file into the text to inject.
@@ -198,5 +216,26 @@ mod tests {
     #[test]
     fn does_not_note_any_file_when_the_whole_index_is_described() {
         assert!(note(&[]).is_empty());
+    }
+
+    #[test]
+    fn adds_the_hint_instructions_only_when_the_hint_is_given() {
+        let prompt = template(Some("es un refactor"), None, CONVENTION, STATUS);
+        assert!(prompt.contains("The USER HINT complements the other instructions"));
+        assert!(prompt.contains(":: USER HINT ::\nes un refactor\n:: END USER HINT ::"));
+    }
+
+    #[test]
+    fn adds_the_context_instructions_only_when_the_context_is_given() {
+        let prompt = template(None, Some("proyecto rust"), CONVENTION, STATUS);
+        assert!(prompt.contains("The PROJECT CONTEXT complements the other instructions"));
+        assert!(prompt.contains(":: PROJECT CONTEXT ::\nproyecto rust\n:: END PROJECT CONTEXT ::"));
+    }
+
+    #[test]
+    fn does_not_add_the_optional_instructions_when_nothing_is_given() {
+        let prompt = template(None, None, CONVENTION, STATUS);
+        assert!(!prompt.contains("The USER HINT complements the other instructions"));
+        assert!(!prompt.contains("The PROJECT CONTEXT complements the other instructions"));
     }
 }

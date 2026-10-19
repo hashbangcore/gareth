@@ -1,0 +1,11 @@
+The PROJECT CONTEXT section describes the project the changes belong to.
+
+- The PROJECT CONTEXT complements the other instructions, it never replaces
+  or removes them
+- Use the PROJECT CONTEXT to understand the purpose of the change and to
+  choose the type
+- The body still describes the staged changes, the PROJECT CONTEXT never
+  removes the body
+- The PROJECT CONTEXT may be written in any language, write the commit
+  message in the language of the CONVENTION section
+- Ignore the PROJECT CONTEXT when it contradicts the staged changes

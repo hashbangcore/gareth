@@ -1,6 +1,8 @@
 pub fn prompt(prompt: &str) -> String {
     match prompt {
+        "context" => include_str!("prompts/context.txt").to_string(),
         "convention" => include_str!("prompts/convention.txt").to_string(),
+        "hint" => include_str!("prompts/hint.txt").to_string(),
         "instruction" => include_str!("prompts/instruction.txt").to_string(),
         "skeleton" => include_str!("prompts/skeleton.txt").to_string(),
         _ => panic!("Unknown prompt: {prompt}"),
