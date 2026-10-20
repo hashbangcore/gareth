@@ -228,6 +228,7 @@ mod tests {
         assert!(check_files(&[]).is_ok());
     }
 
+    #[ignore = "needs git in the PATH"]
     #[test]
     fn refuses_a_path_that_git_does_not_know() {
         let err = check_files(&["gareth-no-existe-jamas.txt".to_string()]).unwrap_err();
