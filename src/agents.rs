@@ -3,3 +3,5 @@
 pub mod pipeline;
 /// Works with the current repository.
 pub mod repo;
+/// Works with the tools of an MCP server.
+pub mod mcp;

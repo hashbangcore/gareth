@@ -39,6 +39,23 @@ pub enum Commands {
         command: RepoCommands,
     },
 
+    /// Work with the tools of an MCP server
+    Mcp {
+        /// Name of the server in the configuration
+        server: Option<String>,
+        /// Question for the model
+        prompt: Vec<String>,
+        /// Path to the MCP configuration file
+        #[arg(long)]
+        config: Option<String>,
+        /// List the servers of the configuration
+        #[arg(long)]
+        list: bool,
+        /// List the tools of the server and stop
+        #[arg(long)]
+        tools: bool,
+    },
+
     /// Process a single prompt
     Prompt {
         /// Prompt provided via the command line
@@ -138,6 +155,51 @@ mod tests {
     fn file_group_is_accepted(args: &[&str]) -> Result<(), String> {
         let matches = Cli::command().get_matches_from(args);
         check_commit_layout(&matches)
+    }
+
+    /// Parses the arguments and returns the server and the question.
+    fn mcp_options(args: &[&str]) -> (Option<String>, Vec<String>) {
+        let cli = Cli::try_parse_from(args).unwrap();
+        let Some(Commands::Mcp { server, prompt, .. }) = cli.command else {
+            panic!("expected an mcp command");
+        };
+        (server, prompt)
+    }
+
+    #[test]
+    fn reads_the_server_and_the_question() {
+        let (server, prompt) = mcp_options(&[
+            "gareth", "mcp", "nixos", "how", "to", "install", "neovim",
+        ]);
+        assert_eq!(server.as_deref(), Some("nixos"));
+        assert_eq!(prompt, vec!["how", "to", "install", "neovim"]);
+    }
+
+    #[test]
+    fn reads_the_server_without_a_question() {
+        let (server, prompt) = mcp_options(&["gareth", "mcp", "nixos"]);
+        assert_eq!(server.as_deref(), Some("nixos"));
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn reads_the_flags_of_the_mcp_command() {
+        let cli = Cli::try_parse_from(["gareth", "mcp", "--list"]).unwrap();
+        let Some(Commands::Mcp { list, tools, config, .. }) = cli.command else {
+            panic!("expected an mcp command");
+        };
+        assert!(list);
+        assert!(!tools);
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn reads_the_config_path() {
+        let cli = Cli::try_parse_from(["gareth", "mcp", "--config", "/tmp/mcp.json"]).unwrap();
+        let Some(Commands::Mcp { config, .. }) = cli.command else {
+            panic!("expected an mcp command");
+        };
+        assert_eq!(config.as_deref(), Some("/tmp/mcp.json"));
     }
 
     #[test]

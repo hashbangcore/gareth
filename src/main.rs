@@ -54,6 +54,22 @@ async fn execute(
         Some(core::Commands::Repo { command }) => {
             agent::repo::dispatch(service, args, command).await?
         }
+        Some(core::Commands::Mcp {
+            server,
+            prompt,
+            config,
+            list,
+            tools,
+        }) => {
+            let options = agent::mcp::Options {
+                server: server.as_deref(),
+                prompt,
+                config: config.as_deref(),
+                list: *list,
+                tools: *tools,
+            };
+            agent::mcp::dispatch(service, args, &options, stdin).await?
+        }
         Some(core::Commands::Prompt { input }) => {
             let input_text = input.join(" ");
             agent::pipeline::dispatch(service, args, &input_text, stdin).await?

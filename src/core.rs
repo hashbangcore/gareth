@@ -7,4 +7,4 @@ mod router;
 pub mod trace;
 
 pub use interface::{Cli, Commands, RepoCommands, check_commit_layout};
-pub use router::Service;
+pub use router::{Message, Service, Tool, Turn, describe};
