@@ -1,3 +1,5 @@
+//! Reading files and deciding whether they hold text.
+
 use std::env;
 use std::fmt;
 use std::fs;
@@ -92,6 +94,12 @@ pub fn is_text(bytes: &[u8]) -> bool {
 }
 
 /// Reads a file that must hold text, failing when it does not.
+///
+/// # Errors
+///
+/// Returns [`ReadError::NotFound`] when there is no file, [`ReadError::NotAFile`]
+/// when it is not a regular file and [`ReadError::NotText`] when it does not
+/// hold text.
 pub fn read_text_file(path: &str) -> Result<String, ReadError> {
     let home = env::var("HOME").ok();
     let bytes = read_bytes(path, home.as_deref())?;
@@ -104,38 +112,28 @@ pub fn read_text_file(path: &str) -> Result<String, ReadError> {
     String::from_utf8(bytes).map_err(|_| ReadError::NotText(path.to_string()))
 }
 
-/// A value supplied by the user, resolved to the text to inject in a prompt.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Value {
-    /// Text to inject in the prompt.
-    pub text: String,
-    /// Path of the file the text came from, when it came from a file.
-    pub path: Option<String>,
-}
-
 /// Resolves a value that may be either literal text or a path to a text file.
 ///
-/// A value naming an existing regular file is read and must hold text. A
-/// value that clearly looks like a path but does not exist is an error.
-/// Anything else is taken as literal text.
-pub fn resolve_value(value: &str) -> Result<Value, ReadError> {
+/// A value naming an existing regular file is read, and anything else is
+/// taken as literal text.
+///
+/// # Errors
+///
+/// Returns [`ReadError::NotFound`] when the value looks like a path but no
+/// file is there, [`ReadError::NotAFile`] when it is not a regular file and
+/// [`ReadError::NotText`] when the file does not hold text.
+pub fn resolve_value(value: &str) -> Result<String, ReadError> {
     let home = env::var("HOME").ok();
     let expanded = expand_path(value, home.as_deref());
 
     match fs::metadata(&expanded) {
-        Ok(meta) if meta.is_file() => Ok(Value {
-            text: read_text_file(value)?,
-            path: Some(value.to_string()),
-        }),
+        Ok(meta) if meta.is_file() => read_text_file(value),
         Ok(_) => Err(ReadError::NotAFile(value.to_string())),
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
             if looks_like_path(value) {
                 Err(ReadError::NotFound(value.to_string()))
             } else {
-                Ok(Value {
-                    text: value.to_string(),
-                    path: None,
-                })
+                Ok(value.to_string())
             }
         }
         Err(source) => Err(ReadError::Io {
@@ -176,7 +174,7 @@ mod tests {
 
     #[test]
     fn expands_home_against_the_real_environment() {
-        // Only meaningful when a home directory is set, which it always is here.
+        // A home directory is always set in a test environment.
         let home = env::var("HOME").unwrap();
         assert_eq!(expand_path("~/x", Some(&home)), format!("{home}/x"));
         assert_eq!(expand_path("~/x", None), "~/x");
@@ -199,25 +197,25 @@ mod tests {
     #[test]
     fn accepts_empty_plain_and_unicode_text() {
         assert!(is_text(b""));
-        assert!(is_text(b"hola mundo\n"));
-        assert!(is_text("ñandú 日本\n".as_bytes()));
+        assert!(is_text(b"hello world\n"));
+        assert!(is_text("naïve café €\n".as_bytes()));
     }
 
     #[test]
     fn rejects_a_nul_byte() {
         assert!(!is_text(b"\x00\x01\x02"));
-        assert!(!is_text(b"texto normal\n\x00al final\n"));
+        assert!(!is_text(b"plain text\n\x00at the end\n"));
     }
 
     #[test]
     fn rejects_invalid_utf8() {
         assert!(!is_text(&[0xff, 0xfe, 0xfd]));
-        assert!(!is_text(b"texto normal\n\xff\n"));
+        assert!(!is_text(b"plain text\n\xff\n"));
     }
 
     #[test]
     fn accepts_a_multibyte_character_cut_at_the_end() {
-        let mut sample = "ñ".as_bytes().to_vec();
+        let mut sample = "€".as_bytes().to_vec();
         sample.pop();
         assert!(is_text(&sample));
     }
@@ -236,19 +234,17 @@ mod tests {
 
     #[test]
     fn takes_a_plain_value_as_literal_text() {
-        let value = resolve_value("es un refactor").unwrap();
-        assert_eq!(value.text, "es un refactor");
-        assert_eq!(value.path, None);
+        assert_eq!(resolve_value("a refactor").unwrap(), "a refactor");
     }
 
     #[test]
     fn reads_an_existing_text_file() {
         let path = temp_path("resolve-text.txt");
-        fs::write(&path, "contenido del fichero\n").unwrap();
+        fs::write(&path, "file content\n").unwrap();
 
-        let value = resolve_value(path.to_str().unwrap()).unwrap();
-        assert_eq!(value.text, "contenido del fichero\n");
-        assert_eq!(value.path.as_deref(), Some(path.to_str().unwrap()));
+        let text = resolve_value(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(text, "file content\n");
         fs::remove_file(&path).unwrap();
     }
 
@@ -258,6 +254,7 @@ mod tests {
         fs::write(&path, [0x00u8, 0x01, 0x02]).unwrap();
 
         let err = resolve_value(path.to_str().unwrap()).unwrap_err();
+
         assert!(matches!(err, ReadError::NotText(_)));
         assert!(err.to_string().ends_with(": not a text file"));
         fs::remove_file(&path).unwrap();
@@ -275,9 +272,10 @@ mod tests {
 
     #[test]
     fn takes_a_missing_bare_name_as_literal_text() {
-        let value = resolve_value("gareth-no-existe-jamas.txt").unwrap();
-        assert_eq!(value.text, "gareth-no-existe-jamas.txt");
-        assert_eq!(value.path, None);
+        assert_eq!(
+            resolve_value("gareth-no-existe-jamas.txt").unwrap(),
+            "gareth-no-existe-jamas.txt"
+        );
     }
 
     #[test]
@@ -293,6 +291,7 @@ mod tests {
         fs::write(&path, "sin extension\n").unwrap();
 
         let content = read_text_file(path.to_str().unwrap()).unwrap();
+
         assert_eq!(content, "sin extension\n");
         fs::remove_file(&path).unwrap();
     }

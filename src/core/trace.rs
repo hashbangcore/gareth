@@ -1,3 +1,5 @@
+//! A local server that prints the traffic of every running instance.
+
 use std::error::Error;
 use std::fmt;
 use std::io::Write;
@@ -68,10 +70,15 @@ fn separator_line() -> String {
     ".".repeat(count) + "\n"
 }
 
+/// Runs the trace server until it fails.
+///
+/// # Errors
+///
+/// Returns an error when the socket cannot be created, bound or read.
 pub async fn run_trace_server() -> Result<(), TraceError> {
     let socket_path = resolve_trace_socket_path();
 
-    // Replace old socket if it exists.
+    // A socket from a previous run would keep the bind from succeeding.
     if socket_path.exists() {
         std::fs::remove_file(&socket_path).map_err(|source| TraceError::Socket {
             action: "remove",
@@ -121,6 +128,7 @@ pub async fn run_trace_server() -> Result<(), TraceError> {
     }
 }
 
+/// Sends an entry to the trace server, when one is listening.
 pub async fn send_trace(kind: &str, payload: &str) {
     let socket_path = resolve_trace_socket_path();
     // Nothing is listening when the socket is absent, so skip the syscalls.

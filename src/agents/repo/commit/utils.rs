@@ -1,18 +1,37 @@
-pub fn prompt(prompt: &str) -> String {
-    match prompt {
-        "context" => include_str!("prompts/context.txt").to_string(),
-        "convention" => include_str!("prompts/convention.txt").to_string(),
-        "hint" => include_str!("prompts/hint.txt").to_string(),
-        "instruction" => include_str!("prompts/instruction.txt").to_string(),
-        "skeleton" => include_str!("prompts/skeleton.txt").to_string(),
-        _ => panic!("Unknown prompt: {prompt}"),
+//! Helpers to build and tidy the pieces of a commit message.
+
+/// A prompt that can be sent to the model.
+#[derive(Clone, Copy, Debug)]
+pub enum Prompt {
+    /// The types and scopes a commit message can use.
+    Convention,
+    /// The instructions that describe the project context.
+    Context,
+    /// The instructions that describe the user hint.
+    Hint,
+    /// The instructions to write the commit message.
+    Instruction,
+    /// The shape of the commit message.
+    Skeleton,
+}
+
+impl Prompt {
+    /// Returns the text of the prompt.
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Convention => include_str!("prompts/convention.txt"),
+            Self::Context => include_str!("prompts/context.txt"),
+            Self::Hint => include_str!("prompts/hint.txt"),
+            Self::Instruction => include_str!("prompts/instruction.txt"),
+            Self::Skeleton => include_str!("prompts/skeleton.txt"),
+        }
     }
 }
 
 /// Comments every line, used to show the convention under the result.
 pub fn comment(text: &str) -> String {
     text.lines()
-        .map(|line| format!("# {}", line))
+        .map(|line| format!("# {line}"))
         .collect::<Vec<_>>()
         .join("\n")
 }

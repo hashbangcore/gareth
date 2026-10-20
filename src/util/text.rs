@@ -1,3 +1,5 @@
+//! Helpers to tokenize text and to shape the blocks of a prompt.
+
 /// Splits a command line into arguments, honoring quotes and backslash escapes.
 pub fn split_args(input: &str) -> Vec<String> {
     let mut args = Vec::new();
@@ -33,8 +35,7 @@ pub fn split_args(input: &str) -> Vec<String> {
 
         if ch.is_whitespace() {
             if !current.is_empty() {
-                args.push(current.clone());
-                current.clear();
+                args.push(std::mem::take(&mut current));
             }
             continue;
         }
@@ -94,8 +95,8 @@ mod tests {
     fn splits_quotes_and_escapes() {
         assert_eq!(split_args(""), Vec::<String>::new());
         assert_eq!(split_args("   "), Vec::<String>::new());
-        assert_eq!(split_args("lee dos.txt"), vec!["lee", "dos.txt"]);
-        assert_eq!(split_args("\"un archivo\" y"), vec!["un archivo", "y"]);
+        assert_eq!(split_args("read two.txt"), vec!["read", "two.txt"]);
+        assert_eq!(split_args("\"a file\" and"), vec!["a file", "and"]);
         assert_eq!(split_args("a\\ b"), vec!["a b"]);
         // An empty quoted token is dropped.
         assert_eq!(split_args("\"\" x"), vec!["x"]);
@@ -114,9 +115,9 @@ mod tests {
         assert!(looks_like_path("/etc/hosts"));
         assert!(looks_like_path("./src/main.rs"));
         assert!(looks_like_path("../arriba"));
-        assert!(looks_like_path("~/notas.txt"));
+        assert!(looks_like_path("~/notes.txt"));
 
-        assert!(!looks_like_path("notas.txt"));
+        assert!(!looks_like_path("notes.txt"));
         assert!(!looks_like_path("src/main.rs"));
         assert!(!looks_like_path(""));
     }
@@ -124,13 +125,13 @@ mod tests {
     #[test]
     fn indents_every_line_and_keeps_the_trailing_newline() {
         assert_eq!(indent_block("", "  "), "");
-        assert_eq!(indent_block("uno", "  "), "  uno");
-        assert_eq!(indent_block("uno\ndos\n", "  "), "  uno\n  dos\n  ");
+        assert_eq!(indent_block("one", "  "), "  one");
+        assert_eq!(indent_block("one\ntwo\n", "  "), "  one\n  two\n  ");
     }
 
     #[test]
     fn indents_blank_lines_too() {
-        assert_eq!(indent_block("uno\n\ndos", "  "), "  uno\n  \n  dos");
+        assert_eq!(indent_block("one\n\ntwo", "  "), "  one\n  \n  two");
     }
 }
 
@@ -141,8 +142,8 @@ mod section_tests {
     #[test]
     fn wraps_content_in_uppercase_markers() {
         assert_eq!(
-            section("user hint", "hola"),
-            ":: USER HINT ::\nhola\n:: END USER HINT ::"
+            section("user hint", "hello"),
+            ":: USER HINT ::\nhello\n:: END USER HINT ::"
         );
     }
 }

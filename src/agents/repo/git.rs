@@ -1,3 +1,5 @@
+//! The changes of the repository, as git reports them.
+
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -43,7 +45,7 @@ where
 }
 
 /// Builds the message that explains why git failed.
-fn failure(out: &GitOutput) -> String {
+fn failure_message(out: &GitOutput) -> String {
     let message = out.stderr.trim();
     if message.is_empty() {
         "git failed".to_string()
@@ -56,7 +58,7 @@ fn failure(out: &GitOutput) -> String {
 fn check_repository() -> Result<(), String> {
     let out = git(["rev-parse", "--is-inside-work-tree"]);
     if out.code != Some(0) {
-        return Err(failure(&out));
+        return Err(failure_message(&out));
     }
     Ok(())
 }
@@ -88,8 +90,8 @@ fn steps(files: &[String]) -> Vec<Step> {
     if files.is_empty() {
         return vec![
             Step {
-                display: "git diff --cached --quiet".to_string(),
-                args: vec!["diff".into(), "--cached".into(), "--quiet".into()],
+                display: "git diff --staged --quiet".to_string(),
+                args: vec!["diff".into(), "--staged".into(), "--quiet".into()],
             },
             Step {
                 display: "git diff --staged --stat --no-color".to_string(),
@@ -132,8 +134,12 @@ fn steps(files: &[String]) -> Vec<Step> {
 
 /// Collects the changes to describe to the model.
 ///
-/// `Ok(None)` means there is nothing to describe. `Err` carries the message
-/// git reported, so the caller can stop before asking the model anything.
+/// `Ok(None)` means there is nothing to describe, `Err` carries the message
+/// git reported.
+///
+/// # Errors
+///
+/// Returns the message git reported when a command fails.
 pub fn staged_changes(files: &[String]) -> Result<Option<String>, String> {
     check_repository()?;
 
@@ -152,10 +158,10 @@ pub fn staged_changes(files: &[String]) -> Result<Option<String>, String> {
             match out.code {
                 Some(0) => return Ok(None),
                 Some(1) => {}
-                _ => return Err(failure(&out)),
+                _ => return Err(failure_message(&out)),
             }
         } else if out.code != Some(0) {
-            return Err(failure(&out));
+            return Err(failure_message(&out));
         }
 
         let mut output = out.stdout;
@@ -169,6 +175,10 @@ pub fn staged_changes(files: &[String]) -> Result<Option<String>, String> {
 }
 
 /// Checks that the paths are known to git, the way `git commit <paths>` needs.
+///
+/// # Errors
+///
+/// Returns the message git reported when a path is unknown or git fails.
 pub fn check_files(files: &[String]) -> Result<(), String> {
     if files.is_empty() {
         return Ok(());
@@ -179,7 +189,7 @@ pub fn check_files(files: &[String]) -> Result<(), String> {
 
     let out = git(&args);
     if out.code != Some(0) {
-        return Err(failure(&out));
+        return Err(failure_message(&out));
     }
     Ok(())
 }

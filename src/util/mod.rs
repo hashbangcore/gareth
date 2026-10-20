@@ -6,7 +6,7 @@
 //! - [`files`]: reading files from disk and deciding whether they hold text.
 //! - [`attach`]: turning attachments into prompt context blocks.
 //! - [`text`]: tokenizing, path detection, block indentation and prompt sections.
-//! - [`env`]: environment variables.
+//! - [`env`](mod@env): environment variables.
 //! - [`io`]: standard input.
 
 pub mod attach;

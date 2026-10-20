@@ -1,3 +1,5 @@
+//! Reading the standard input.
+
 use std::io::{self, IsTerminal, Read};
 
 /// Reads all content from a reader, failing on invalid UTF-8.
@@ -8,6 +10,11 @@ fn read_stdin(mut reader: impl Read) -> io::Result<String> {
 }
 
 /// Reads all stdin content when input is piped, otherwise returns empty string.
+///
+/// # Errors
+///
+/// Returns an error when the standard input cannot be read or is not valid
+/// UTF-8.
 pub fn get_stdin() -> io::Result<String> {
     let stdin = io::stdin();
     if stdin.is_terminal() {
@@ -23,7 +30,7 @@ mod tests {
 
     #[test]
     fn reads_piped_content() {
-        assert_eq!(read_stdin(Cursor::new("hola\n")).unwrap(), "hola\n");
+        assert_eq!(read_stdin(Cursor::new("hello\n")).unwrap(), "hello\n");
         assert_eq!(read_stdin(Cursor::new("")).unwrap(), "");
     }
 

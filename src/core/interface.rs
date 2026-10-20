@@ -1,3 +1,5 @@
+//! The command line of the tool.
+
 use clap::{ArgMatches, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -28,6 +30,7 @@ pub struct Cli {
     pub trace: bool,
 }
 
+/// The tasks the tool can run.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Work with the current repository
@@ -46,6 +49,7 @@ pub enum Commands {
     Completion { shell: clap_complete::Shell },
 }
 
+/// The tasks that work with the repository.
 #[derive(Subcommand, Debug)]
 pub enum RepoCommands {
     /// Generate a commit message
@@ -69,6 +73,10 @@ pub enum RepoCommands {
 ///
 /// The options may come before or after the files, but the files themselves
 /// have to be given together.
+///
+/// # Errors
+///
+/// Returns a message when an option sits between two file arguments.
 pub fn check_commit_layout(matches: &ArgMatches) -> Result<(), String> {
     let Some(commit) = matches
         .subcommand_matches("repo")
@@ -81,21 +89,26 @@ pub fn check_commit_layout(matches: &ArgMatches) -> Result<(), String> {
         .indices_of("files")
         .map(|it| it.collect())
         .unwrap_or_default();
-    let (Some(first), Some(last)) = (files.first(), files.last()) else {
+    let Some((first, last)) = files.first().zip(files.last()) else {
         return Ok(());
     };
 
-    let split = ["hint", "context", "convention"].iter().any(|name| {
-        commit
-            .indices_of(name)
-            .is_some_and(|mut indices| indices.any(|index| index > *first && index < *last))
-    });
+    let split = ["hint", "context", "convention"]
+        .iter()
+        .any(|name| option_between(commit, name, *first, *last));
 
     if split {
         return Err("the file arguments must be given together".to_string());
     }
 
     Ok(())
+}
+
+/// Tells whether an option was given between two file arguments.
+fn option_between(matches: &ArgMatches, name: &str, first: usize, last: usize) -> bool {
+    matches
+        .indices_of(name)
+        .is_some_and(|mut indices| indices.any(|index| index > first && index < last))
 }
 
 #[cfg(test)]
@@ -134,12 +147,12 @@ mod tests {
             "repo",
             "commit",
             "--hint",
-            "es un refactor",
+            "a refactor",
             "--context",
-            "proyecto rust",
+            "a rust project",
         ]);
-        assert_eq!(hint.as_deref(), Some("es un refactor"));
-        assert_eq!(context.as_deref(), Some("proyecto rust"));
+        assert_eq!(hint.as_deref(), Some("a refactor"));
+        assert_eq!(context.as_deref(), Some("a rust project"));
         assert!(files.is_empty());
     }
 
@@ -153,9 +166,9 @@ mod tests {
 
     #[test]
     fn takes_a_positional_argument_as_a_file_and_not_as_a_hint() {
-        let (hint, _, files) = commit_options(&["gareth", "repo", "commit", "es un refactor"]);
+        let (hint, _, files) = commit_options(&["gareth", "repo", "commit", "a refactor"]);
         assert!(hint.is_none());
-        assert_eq!(files, vec!["es un refactor"]);
+        assert_eq!(files, vec!["a refactor"]);
     }
 
     #[test]
@@ -171,14 +184,14 @@ mod tests {
             "repo",
             "commit",
             "--hint",
-            "un hint",
+            "a hint",
             "--context",
-            "un contexto",
+            "a context",
             "src/a.rs",
             "src/b.rs",
         ]);
-        assert_eq!(hint.as_deref(), Some("un hint"));
-        assert_eq!(context.as_deref(), Some("un contexto"));
+        assert_eq!(hint.as_deref(), Some("a hint"));
+        assert_eq!(context.as_deref(), Some("a context"));
         assert_eq!(files, vec!["src/a.rs", "src/b.rs"]);
     }
 

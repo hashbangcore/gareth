@@ -1,3 +1,5 @@
+//! Reading environment variables.
+
 use std::env;
 
 /// Returns the value of an environment variable, ignoring blank values.

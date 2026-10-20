@@ -1,3 +1,5 @@
+//! Printing the output of the model in the terminal.
+
 use std::io::IsTerminal;
 use termimad::MadSkin;
 

@@ -1,3 +1,8 @@
+//! Gareth, a command line tool for language models.
+
+#![deny(clippy::correctness)]
+#![warn(missing_docs)]
+
 mod agents;
 mod core;
 mod util;
@@ -18,7 +23,7 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = util::get_stdin()?;
     let matches = core::Cli::command().get_matches();
-    core::interface::check_commit_layout(&matches)?;
+    core::check_commit_layout(&matches)?;
     let args = core::Cli::from_arg_matches(&matches)?;
 
     if args.trace && (args.command.is_some() || !args.prompt.is_empty()) {
@@ -35,7 +40,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let service = core::Service::new(&args)?;
+    let service = core::Service::new(args.verbose)?;
 
     execute(&service, &args, stdin).await
 }

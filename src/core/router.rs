@@ -1,8 +1,9 @@
+//! Talks to an OpenAI-compatible endpoint.
+
 use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
-use crate::core::Cli;
 use crate::core::config::Config;
 use crate::core::trace::send_trace;
 
@@ -15,8 +16,8 @@ const SNIPPET_LIMIT: usize = 400;
 
 /// Seconds allowed for the TCP connection to be established.
 ///
-/// A total timeout is deliberately not set: long answers and slow models are normal,
-/// while a connection that never completes is not.
+/// A total timeout is deliberately not set: long answers and slow models
+/// are normal, while a connection that never completes is not.
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 
 /// Holds everything needed to talk to an OpenAI-compatible endpoint.
@@ -141,10 +142,16 @@ impl Error for ServiceError {
 }
 
 impl Service {
-    pub fn new(args: &Cli) -> Result<Self, ServiceError> {
+    /// Builds a service from the configuration in the environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is incomplete or when the HTTP
+    /// client cannot be built.
+    pub fn new(verbose: bool) -> Result<Self, ServiceError> {
         let config = Config::from_env()?;
 
-        if args.verbose {
+        if verbose {
             println!("model: {:#?}\nurl: {:#?}\n", config.model, config.endpoint);
         }
 
@@ -178,8 +185,13 @@ impl Service {
         req
     }
 
+    /// Sends a prompt to the endpoint and returns the answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the endpoint cannot be reached, when it answers
+    /// with a failure or when the answer cannot be read.
     pub async fn complete(&self, content: &str) -> Result<String, ServiceError> {
-        // Send request/response to the trace server when enabled.
         send_trace(":: REQUEST ::", content).await;
 
         let response =
@@ -297,12 +309,12 @@ mod tests {
     use super::*;
 
     /// A completion body as an OpenAI-compatible server would return it.
-    const OK_BODY: &str = r#"{"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"qwen2.5:0.5b","choices":[{"index":0,"message":{"role":"assistant","content":"Hola, mi nombre es Qwen"},"finish_reason":"stop"}],"usage":{"prompt_tokens":36,"completion_tokens":20,"total_tokens":56}}"#;
+    const OK_BODY: &str = r#"{"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"qwen2.5:0.5b","choices":[{"index":0,"message":{"role":"assistant","content":"Hello, my name is Qwen"},"finish_reason":"stop"}],"usage":{"prompt_tokens":36,"completion_tokens":20,"total_tokens":56}}"#;
 
     #[test]
     fn reads_the_assistant_content_from_a_completion() {
         let content = parse_completion(OK_BODY).unwrap();
-        assert_eq!(content, "Hola, mi nombre es Qwen");
+        assert_eq!(content, "Hello, my name is Qwen");
     }
 
     #[test]
@@ -336,7 +348,7 @@ mod tests {
     fn accepts_a_successful_response() {
         assert_eq!(
             parse_response(StatusCode::OK, OK_BODY).unwrap(),
-            "Hola, mi nombre es Qwen"
+            "Hello, my name is Qwen"
         );
     }
 
@@ -401,6 +413,6 @@ mod tests {
         assert_eq!(snippet(&body, 10), format!("{}...", "a".repeat(10)));
         assert_eq!(snippet("  limpio  ", 40), "limpio");
         // Truncation counts characters, not bytes.
-        assert_eq!(snippet("áéíóú", 3), "áéí...");
+        assert_eq!(snippet("aàéè", 3), "aàé...");
     }
 }

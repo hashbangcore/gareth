@@ -1,3 +1,5 @@
+//! Builds the prompt and asks the model for an answer.
+
 use crate::core;
 use crate::util::{attach, terminal};
 
@@ -53,15 +55,15 @@ mod tests {
 
     #[test]
     fn wraps_the_request_in_the_user_hint_block() {
-        let prompt = build_prompt("una pregunta", "");
-        assert!(prompt.contains(":: USER HINT ::\nuna pregunta\n:: END USER HINT ::"));
+        let prompt = build_prompt("a question", "");
+        assert!(prompt.contains(":: USER HINT ::\na question\n:: END USER HINT ::"));
         assert!(!prompt.contains("ATTACHED FILES"));
     }
 
     #[test]
     fn attaches_the_stdin() {
-        let prompt = build_prompt("una pregunta", "contenido\n");
+        let prompt = build_prompt("a question", "content\n");
         assert!(prompt.contains(":: ATTACHED FILES ::"));
-        assert!(prompt.contains("contenido"));
+        assert!(prompt.contains("content"));
     }
 }

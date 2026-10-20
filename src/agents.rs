@@ -1,5 +1,5 @@
-//! Actions modules that power CLI commands.
-/// Single prompt pipeline task.
+//! The tasks the tool can run.
+/// Sends a single prompt to the model.
 pub mod pipeline;
-/// Repository tasks.
+/// Works with the current repository.
 pub mod repo;

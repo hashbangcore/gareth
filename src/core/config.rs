@@ -1,18 +1,27 @@
+//! The configuration read from the environment.
+
 use crate::core::router::ServiceError;
 use crate::util::env::env_var;
 
-/// Configuration resolved from environment variables and CLI flags.
+/// Configuration resolved from environment variables.
 ///
 /// Gareth is provider agnostic: endpoint, model and key always come from the
 /// environment, there is no built-in provider.
 pub struct Config {
+    /// URL of the chat completions endpoint.
     pub endpoint: String,
+    /// Name of the model to use.
     pub model: String,
+    /// Key sent as a bearer token, when the endpoint asks for one.
     pub apikey: Option<String>,
 }
 
 impl Config {
     /// Loads configuration from environment variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the endpoint or the model are not set.
     pub fn from_env() -> Result<Self, ServiceError> {
         let endpoint = env_var("GARETH_URL");
         let model = env_var("GARETH_MODEL");
