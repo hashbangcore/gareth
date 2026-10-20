@@ -54,6 +54,9 @@ async fn execute(
             agent::pipeline::dispatch(service, args, &input_text, stdin).await?
         }
         Some(core::Commands::Completion { shell }) => {
+            if args.dump {
+                return Err("the completion command does not send anything to the model".into());
+            }
             let mut cmd = core::Cli::command();
             generate(*shell, &mut cmd, "gareth", &mut std::io::stdout());
         }

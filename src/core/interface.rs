@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
+    /// Print the prompt that would be sent, without sending it
+    #[arg(long, global = true)]
+    pub dump: bool,
+
     /// Start a trace server to print raw LLM traffic
     #[arg(short = 't', long)]
     pub trace: bool,
@@ -206,5 +210,23 @@ mod tests {
     #[test]
     fn accepts_a_command_without_files() {
         assert!(file_group_is_accepted(&["gareth", "repo", "commit", "--hint", "h"]).is_ok());
+    }
+
+    #[test]
+    fn reads_the_dump_flag_before_the_subcommand() {
+        let cli = Cli::try_parse_from(["gareth", "--dump", "repo", "commit"]).unwrap();
+        assert!(cli.dump);
+    }
+
+    #[test]
+    fn reads_the_dump_flag_after_the_subcommand() {
+        let cli = Cli::try_parse_from(["gareth", "repo", "commit", "--dump"]).unwrap();
+        assert!(cli.dump);
+    }
+
+    #[test]
+    fn leaves_the_dump_flag_off_by_default() {
+        let cli = Cli::try_parse_from(["gareth", "repo", "commit"]).unwrap();
+        assert!(!cli.dump);
     }
 }

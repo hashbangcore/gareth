@@ -1,9 +1,13 @@
 use crate::core;
 use crate::util::files;
 use crate::util::section;
+use crate::util::terminal;
 
 use super::utils::{comment, normalize_commit_message, prompt as prompt_for};
 use crate::agents::repo::git::{check_files, staged_changes};
+
+/// The text shown in place of the changes when there is nothing to describe.
+const NO_CHANGES: &str = "No staged changes";
 
 fn template(
     hint: Option<&str>,
@@ -89,6 +93,18 @@ fn status_text(files: &[String]) -> Result<Option<String>, String> {
     Ok(Some(format!("{note}\n\n{changes}")))
 }
 
+/// Chooses the text of the repository status.
+///
+/// The dump is for inspecting the prompt, so it is shown even when there is
+/// nothing to describe.
+fn status_for(status: Option<String>, dump: bool) -> Result<String, Box<dyn std::error::Error>> {
+    match status {
+        Some(status) => Ok(status),
+        None if dump => Ok(NO_CHANGES.to_string()),
+        None => Err("no changes staged for commit".into()),
+    }
+}
+
 /// Builds a commit prompt, calls the model, and prints the final message.
 pub async fn dispatch(
     service: &core::Service,
@@ -110,9 +126,7 @@ pub async fn dispatch(
     let context = resolve_text(context)?;
 
     // Nothing to describe: gareth says so, without asking the model.
-    let Some(status) = status_text(files)? else {
-        return Err("no changes staged for commit".into());
-    };
+    let status = status_for(status_text(files)?, args.dump)?;
 
     let prompt = template(
         hint.as_deref(),
@@ -120,6 +134,11 @@ pub async fn dispatch(
         &convention_text,
         &status,
     );
+
+    if args.dump {
+        terminal::print_prompt(&prompt);
+        return Ok(());
+    }
 
     if args.verbose {
         println!("{}\n\n", prompt);
@@ -140,7 +159,7 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{note, resolve_text, template};
+    use super::{NO_CHANGES, note, resolve_text, status_for, template};
 
     const CONVENTION: &str = "feat: new user-visible functionality";
     const STATUS: &str = "no staged changes";
@@ -237,5 +256,26 @@ mod tests {
         let prompt = template(None, None, CONVENTION, STATUS);
         assert!(!prompt.contains("The USER HINT complements the other instructions"));
         assert!(!prompt.contains("The PROJECT CONTEXT complements the other instructions"));
+    }
+
+    #[test]
+    fn keeps_the_status_when_there_is_something_to_describe() {
+        let status = status_for(Some("el diff".to_string()), false).unwrap();
+        assert_eq!(status, "el diff");
+    }
+
+    #[test]
+    fn stops_when_there_is_nothing_to_describe() {
+        let err = status_for(None, false).unwrap_err();
+        assert!(
+            err.to_string().contains("no changes staged"),
+            "err was {err}"
+        );
+    }
+
+    #[test]
+    fn shows_the_empty_status_when_the_prompt_is_dumped() {
+        let status = status_for(None, true).unwrap();
+        assert_eq!(status, NO_CHANGES);
     }
 }
