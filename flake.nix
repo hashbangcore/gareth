@@ -1,7 +1,7 @@
 {
   description = "LLM agent harness for pipelines.";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.zst";
 
   outputs =
     { self, nixpkgs }:
@@ -12,7 +12,7 @@
     {
       packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
         pname = "gareth";
-        version = "0.1.2";
+        version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
         src = ./.;
         cargoLock = {
           lockFile = ./Cargo.lock;
