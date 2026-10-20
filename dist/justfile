@@ -1,13 +1,11 @@
-set unstable := true
-
 name := "gareth"
 repo := "hashbangcore/gareth"
 target := "x86_64-unknown-linux-gnu"
-version := `cargo pkgid | sed 's/.*#//'`
-tag := "v" + version
+version := "v" + `cargo pkgid | sed 's/.*#//'`
 
 tag:
     git tag -a {{ version }} -m "Release {{ version }}"
+    git push github {{ version }}
 
 build name=name target=target:
     cargo build --bin {{ name }} --release {{ if target != "" { "--target " + target } else { "" } }}
@@ -16,15 +14,16 @@ artifacts target=target name=name:
     rm -rf ./artifacts
     mkdir -p ./artifacts
     cp ../target{{ if target != "" { "/" + target } else { "" } }}/release/gareth ./artifacts
-    tar -czf ./artifacts/{{ name }}-{{ tag }}{{ if target != "" { "-" + target } else { "" } }}.tar.gz -C artifacts gareth
+    tar -czf ./artifacts/{{ name }}-{{ version }}{{ if target != "" { "-" + target } else { "" } }}.tar.gz -C artifacts gareth
     rm -f ./artifacts/{{ name }}
 
 checksum:
     sha256sum artifacts/*tar.gz > artifacts/SHA256SUMS
 
 upload:
-    gh release create {{ tag }} ./artifacts/*.tar.gz ./artifacts/SHA256SUMS \
+    gh release create {{ version }} ./artifacts/*.tar.gz ./artifacts/SHA256SUMS \
       --repo {{ repo }} \
+      --verify-tag \
       --title "{{ name }} {{ version }}" \
       --notes "Release {{ version }}"
 
@@ -32,5 +31,4 @@ info:
     @echo "project={{ name }}"
     @echo "repo={{ repo }}"
     @echo "version={{ version }}"
-    @echo "tag={{ tag }}"
     @echo "target={{ target }}"
