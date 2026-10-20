@@ -61,7 +61,7 @@ pub enum RepoCommands {
         #[arg(long)]
         context: Option<String>,
         /// Path to a custom commit convention file
-        #[arg(short = 'c', long, env = "GARETH_CONVENTION")]
+        #[arg(short = 'c', long)]
         convention: Option<String>,
         /// Files or directories to limit the diff to
         #[arg(value_name = "FILE")]
