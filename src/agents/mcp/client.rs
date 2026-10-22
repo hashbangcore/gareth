@@ -15,7 +15,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation, ProtocolVersion,
     },
-    service::{MaybeSendFuture, NotificationContext, RunningService},
+    service::{ClientInitializeError, MaybeSendFuture, NotificationContext, RunningService},
     transport::{
         StreamableHttpClientTransport, TokioChildProcess,
         streamable_http_client::StreamableHttpClientTransportConfig,
@@ -93,12 +93,13 @@ struct GarethClientHandler {
 }
 
 impl GarethClientHandler {
-    fn new(tools_changed: Arc<AtomicBool>) -> Self {
+    fn new(tools_changed: Arc<AtomicBool>, protocol_version: ProtocolVersion) -> Self {
         Self {
             info: ClientConfig::new(
                 ClientCapabilities::default(),
                 Implementation::new(CLIENT_NAME, CLIENT_VERSION),
-            ),
+            )
+            .with_protocol_version(protocol_version),
             tools_changed,
         }
     }
@@ -134,46 +135,34 @@ impl Client {
     pub async fn start(server: &Server) -> Result<Self, McpError> {
         let tools_changed = Arc::new(AtomicBool::new(false));
         let stderr = Arc::new(std::sync::Mutex::new(String::new()));
-        let handler = GarethClientHandler::new(tools_changed.clone());
         let lifecycle = ClientLifecycleMode::Auto {
             preferred_versions: vec![ProtocolVersion::LATEST],
             legacy_version: Some(ProtocolVersion::V_2025_11_25),
         };
 
-        let service = match &server.transport {
-            Transport::Stdio { command, args, env } => {
-                let mut command_process = Command::new(command);
-                command_process.args(args).envs(env);
-                let (transport, child_stderr) = TokioChildProcess::builder(command_process)
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .map_err(|source| McpError::Start {
-                        command: command.clone(),
-                        source,
-                    })?;
-                if let Some(child_stderr) = child_stderr {
-                    tokio::spawn(capture_stderr(child_stderr, stderr.clone()));
-                }
-                handler
-                    .serve_with_lifecycle(transport, lifecycle)
-                    .await
-                    .map_err(|err| McpError::Transport {
-                        message: error_with_stderr(err.to_string(), &stderr),
-                    })?
+        let service = match start_service(
+            server,
+            tools_changed.clone(),
+            stderr.clone(),
+            lifecycle,
+            ProtocolVersion::LATEST,
+        )
+        .await
+        {
+            Ok(service) => service,
+            Err(StartError::Transport(error)) if should_retry_legacy(&error) => {
+                // Restart with a clean legacy handshake when discovery responses are miscorrelated.
+                start_service(
+                    server,
+                    tools_changed.clone(),
+                    stderr.clone(),
+                    ClientLifecycleMode::Initialize,
+                    ProtocolVersion::V_2025_11_25,
+                )
+                .await
+                .map_err(|error| error.into_mcp_error(&stderr))?
             }
-            Transport::Http { url, headers } => {
-                let parsed_headers = parse_http_headers(headers)?;
-                let transport = StreamableHttpClientTransport::from_config(
-                    StreamableHttpClientTransportConfig::with_uri(url.clone())
-                        .custom_headers(parsed_headers),
-                );
-                handler
-                    .serve_with_lifecycle(transport, lifecycle)
-                    .await
-                    .map_err(|err| McpError::Transport {
-                        message: error_with_stderr(err.to_string(), &stderr),
-                    })?
-            }
+            Err(error) => return Err(error.into_mcp_error(&stderr)),
         };
 
         Ok(Self {
@@ -258,6 +247,76 @@ impl Client {
             })?;
         let value = serde_json::to_value(result).map_err(|source| McpError::Parse { source })?;
         Ok(result_text(&value))
+    }
+}
+
+enum StartError {
+    Process { command: String, source: io::Error },
+    Transport(Box<ClientInitializeError>),
+    Configuration(McpError),
+}
+
+fn should_retry_legacy(error: &ClientInitializeError) -> bool {
+    match error {
+        ClientInitializeError::UncorrelatedErrorResponse { .. } => true,
+        ClientInitializeError::LegacyFallbackFailed { fallback, .. } => matches!(
+            fallback.as_ref(),
+            ClientInitializeError::UncorrelatedErrorResponse { .. }
+        ),
+        _ => false,
+    }
+}
+
+impl StartError {
+    fn into_mcp_error(self, stderr: &std::sync::Mutex<String>) -> McpError {
+        match self {
+            Self::Process { command, source } => McpError::Start { command, source },
+            Self::Transport(source) => McpError::Transport {
+                message: error_with_stderr(source.to_string(), stderr),
+            },
+            Self::Configuration(error) => error,
+        }
+    }
+}
+
+async fn start_service(
+    server: &Server,
+    tools_changed: Arc<AtomicBool>,
+    stderr: Arc<std::sync::Mutex<String>>,
+    lifecycle: ClientLifecycleMode,
+    protocol_version: ProtocolVersion,
+) -> Result<RunningService<RoleClient, GarethClientHandler>, StartError> {
+    let handler = GarethClientHandler::new(tools_changed, protocol_version);
+    match &server.transport {
+        Transport::Stdio { command, args, env } => {
+            let mut command_process = Command::new(command);
+            command_process.args(args).envs(env);
+            let (transport, child_stderr) = TokioChildProcess::builder(command_process)
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|source| StartError::Process {
+                    command: command.clone(),
+                    source,
+                })?;
+            if let Some(child_stderr) = child_stderr {
+                tokio::spawn(capture_stderr(child_stderr, stderr));
+            }
+            handler
+                .serve_with_lifecycle(transport, lifecycle)
+                .await
+                .map_err(|error| StartError::Transport(Box::new(error)))
+        }
+        Transport::Http { url, headers } => {
+            let parsed_headers = parse_http_headers(headers).map_err(StartError::Configuration)?;
+            let transport = StreamableHttpClientTransport::from_config(
+                StreamableHttpClientTransportConfig::with_uri(url.clone())
+                    .custom_headers(parsed_headers),
+            );
+            handler
+                .serve_with_lifecycle(transport, lifecycle)
+                .await
+                .map_err(|error| StartError::Transport(Box::new(error)))
+        }
     }
 }
 
@@ -420,6 +479,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn retries_legacy_for_uncorrelated_discover_or_fallback_errors() {
+        let uncorrelated = ClientInitializeError::UncorrelatedErrorResponse {
+            expected: rmcp::model::RequestId::Number(1),
+            received: rmcp::model::RequestId::Number(0),
+        };
+        assert!(should_retry_legacy(&uncorrelated));
+
+        let fallback_error = ClientInitializeError::LegacyFallbackFailed {
+            discover: Box::new(ClientInitializeError::JsonRpcError(
+                rmcp::model::ErrorData::new(
+                    rmcp::model::ErrorCode::METHOD_NOT_FOUND,
+                    "server/discover",
+                    None,
+                ),
+            )),
+            fallback: Box::new(uncorrelated),
+        };
+        assert!(should_retry_legacy(&fallback_error));
+
+        assert!(!should_retry_legacy(
+            &ClientInitializeError::ConnectionClosed("disconnected".into())
+        ));
+    }
+
+    #[test]
     fn reads_the_text_of_the_content() {
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": "hello" }]
@@ -524,6 +608,62 @@ done
                 .unwrap()
                 .contains("fixture stderr diagnostic")
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retries_legacy_initialization_when_auto_fallback_is_uncorrelated() {
+        let marker =
+            std::env::temp_dir().join(format!("gareth-mcp-fallback-{}.marker", std::process::id()));
+        if marker.exists() {
+            std::fs::remove_file(&marker).unwrap();
+        }
+        let script = r#"
+if [ ! -f "$GARETH_FIXTURE_MARKER" ]; then
+  touch "$GARETH_FIXTURE_MARKER"
+  while IFS= read -r request; do
+    id=$(printf '%s\n' "$request" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    case "$request" in
+      *'"method":"server/discover"'*)
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"legacy MCP server"}}\n' "$id"
+        ;;
+      *'"method":"initialize"'*)
+        printf '{"jsonrpc":"2.0","id":0,"error":{"code":-32602,"message":"uncorrelated legacy response"}}\n'
+        exit 0
+        ;;
+    esac
+  done
+else
+  while IFS= read -r request; do
+    id=$(printf '%s\n' "$request" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    [ -n "$id" ] || continue
+    case "$request" in
+      *'"method":"initialize"'*)
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"legacy-fixture","version":"1"}}}\n' "$id"
+        ;;
+    esac
+  done
+fi
+"#;
+        let server = Server {
+            transport: Transport::Stdio {
+                command: "/bin/sh".into(),
+                args: vec!["-c".into(), script.into()],
+                env: [(
+                    "GARETH_FIXTURE_MARKER".into(),
+                    marker.to_string_lossy().into_owned(),
+                )]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        let mut client = Client::start(&server).await.unwrap();
+        let info = client.initialize().await.unwrap();
+
+        assert_eq!(info.server_info.name, "legacy-fixture");
+        assert_eq!(info.protocol_version, "2025-11-25");
+        std::fs::remove_file(marker).unwrap();
     }
 
     #[test]
