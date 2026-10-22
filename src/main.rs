@@ -82,14 +82,45 @@ async fn execute(
             generate(*shell, &mut cmd, "gareth", &mut std::io::stdout());
         }
         None => {
-            if args.prompt.is_empty() {
-                core::Cli::command().print_help()?;
-            } else {
-                let prompt_text = args.prompt.join(" ");
+            if let Some(prompt_text) = pipeline_request(&args.prompt, &stdin) {
                 agent::pipeline::dispatch(service, args, &prompt_text, stdin).await?;
+            } else {
+                core::Cli::command().print_help()?;
             }
         }
     }
 
     Ok(())
+}
+
+fn pipeline_request(prompt: &[String], stdin: &str) -> Option<String> {
+    let request = prompt.join(" ");
+    if request.trim().is_empty() && stdin.trim().is_empty() {
+        None
+    } else {
+        Some(request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pipeline_request;
+
+    #[test]
+    fn uses_piped_input_when_no_prompt_argument_is_given() {
+        assert_eq!(pipeline_request(&[], "hello\n"), Some(String::new()));
+    }
+
+    #[test]
+    fn shows_help_when_prompt_and_stdin_are_empty() {
+        assert_eq!(pipeline_request(&[], " \n\t"), None);
+    }
+
+    #[test]
+    fn joins_prompt_arguments_and_preserves_piped_context() {
+        assert_eq!(
+            pipeline_request(&["summarize".into(), "this".into()], "context"),
+            Some("summarize this".into())
+        );
+    }
 }
