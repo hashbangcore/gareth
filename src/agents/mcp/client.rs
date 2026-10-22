@@ -1,74 +1,60 @@
-//! A client of the Model Context Protocol, talking over stdio.
+//! A client of the Model Context Protocol, using rmcp for stdio and HTTP.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::collections::HashMap;
+use std::future::Future;
 use std::io;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use http::{HeaderName, HeaderValue};
 use rmcp::{
-    ClientLifecycleMode, ClientServiceExt, RoleClient,
+    ClientHandler, ClientLifecycleMode, ClientServiceExt, RoleClient,
     model::{
         CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation, ProtocolVersion,
     },
-    service::RunningService,
+    service::{MaybeSendFuture, NotificationContext, RunningService},
     transport::{
-        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+        StreamableHttpClientTransport, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::{ChildStderr, Command},
+};
 
 use super::config::{Server, Transport};
-use super::protocol::{Failure, Initialize, Message, Notification, Request, Tool, Tools};
+use super::protocol::{Initialize, Tool};
 
-/// The version of the protocol gareth speaks.
-const PROTOCOL_VERSION: &str = "2025-06-18";
-
-/// The name gareth gives to itself.
+/// The name gareth gives to MCP servers.
 const CLIENT_NAME: &str = "gareth";
 
-/// The version gareth gives to itself.
+/// The version gareth gives to MCP servers.
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_STDERR_BYTES: usize = 32 * 1024;
 
-/// The code the client answers with when the server asks for something it
-/// does not offer.
-const METHOD_NOT_FOUND: i64 = -32601;
-
-/// Why a call to the server could not be made.
+/// Why an MCP connection or request could not be completed.
 #[derive(Debug)]
 pub enum McpError {
-    /// The HTTP transport could not be configured or completed a request.
-    Transport { message: String },
-    /// The server could not be started.
+    /// The server process could not be started.
     Start {
         /// The command that was run.
         command: String,
         /// What went wrong.
         source: io::Error,
     },
-    /// The server did not give the pipes gareth needs.
-    Pipe,
-    /// The server could not be written to.
-    Write {
+    /// The MCP transport or server returned an error.
+    Transport {
         /// What went wrong.
-        source: io::Error,
+        message: String,
     },
-    /// The server could not be read.
-    Read {
-        /// What went wrong.
-        source: io::Error,
-    },
-    /// The server wrote something that is not a message.
+    /// A server returned data Gareth could not parse.
     Parse {
         /// What went wrong.
         source: serde_json::Error,
-    },
-    /// The server stopped before answering.
-    Closed {
-        /// What the server wrote to its standard error.
-        stderr: String,
     },
     /// The server answered with an error.
     Failed {
@@ -79,24 +65,12 @@ pub enum McpError {
     },
 }
 
-impl fmt::Display for McpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for McpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Start { command, source } => write!(f, "could not run {command}: {source}"),
             Self::Transport { message } => write!(f, "MCP transport failed: {message}"),
-            Self::Start { command, source } => {
-                write!(f, "could not run {command}: {source}")
-            }
-            Self::Pipe => f.write_str("the server did not give the pipes gareth needs"),
-            Self::Write { source } => write!(f, "could not write to the server: {source}"),
-            Self::Read { source } => write!(f, "could not read from the server: {source}"),
-            Self::Parse { source } => write!(f, "the server wrote an unreadable message: {source}"),
-            Self::Closed { stderr } => {
-                if stderr.trim().is_empty() {
-                    f.write_str("the server stopped before answering")
-                } else {
-                    write!(f, "the server stopped before answering: {}", stderr.trim())
-                }
-            }
+            Self::Parse { source } => write!(f, "the server returned unreadable data: {source}"),
             Self::Failed { subject, message } => write!(f, "the {subject} failed: {message}"),
         }
     }
@@ -105,387 +79,161 @@ impl fmt::Display for McpError {
 impl std::error::Error for McpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Transport { .. } => None,
             Self::Start { source, .. } => Some(source),
-            Self::Write { source } | Self::Read { source } => Some(source),
             Self::Parse { source } => Some(source),
-            _ => None,
+            Self::Transport { .. } | Self::Failed { .. } => None,
         }
     }
 }
 
-/// A running server, ready to answer.
-pub struct StdioClient {
-    /// The process of the server.
-    child: Child,
-    /// Where the requests are written.
-    stdin: ChildStdin,
-    /// Where the answers are read from.
-    reader: BufReader<ChildStdout>,
-    /// What the server wrote to its standard error.
-    stderr: Arc<Mutex<String>>,
-    /// The identifier of the next request.
-    next_id: u64,
-    /// Whether the server announced that its tool list changed.
-    tools_changed: bool,
+/// Receives MCP notifications and provides Gareth's client identity.
+struct GarethClientHandler {
+    info: ClientConfig,
+    tools_changed: Arc<AtomicBool>,
 }
 
-impl StdioClient {
-    /// Starts the server of the configuration and waits until it can be talked to.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the server cannot be started.
-    async fn start(server: &Server) -> Result<Self, McpError> {
-        let Transport::Stdio {
-            command: program,
-            args,
-            env,
-        } = &server.transport
-        else {
-            return Err(McpError::Transport {
-                message: "stdio client given a non-stdio server".into(),
-            });
-        };
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        for (key, value) in env {
-            command.env(key, value);
+impl GarethClientHandler {
+    fn new(tools_changed: Arc<AtomicBool>) -> Self {
+        Self {
+            info: ClientConfig::new(
+                ClientCapabilities::default(),
+                Implementation::new(CLIENT_NAME, CLIENT_VERSION),
+            ),
+            tools_changed,
         }
-
-        let mut child = command.spawn().map_err(|source| McpError::Start {
-            command: program.clone(),
-            source,
-        })?;
-
-        let stdin = child.stdin.take().ok_or(McpError::Pipe)?;
-        let stdout = child.stdout.take().ok_or(McpError::Pipe)?;
-        let stderr = child.stderr.take().ok_or(McpError::Pipe)?;
-
-        let buffer = Arc::new(Mutex::new(String::new()));
-        tokio::spawn(drain(stderr, buffer.clone()));
-
-        Ok(Self {
-            child,
-            stdin,
-            reader: BufReader::new(stdout),
-            stderr: buffer,
-            next_id: 0,
-            tools_changed: false,
-        })
-    }
-
-    /// Says hello to the server and asks it for its instructions.
-    ///
-    /// The answer carries the version of the protocol and the instructions of
-    /// the server.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the server does not answer.
-    pub async fn initialize(&mut self) -> Result<Initialize, McpError> {
-        let params = serde_json::json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": { "tools": { "listChanged": true } },
-            "clientInfo": { "name": CLIENT_NAME, "version": CLIENT_VERSION },
-        });
-
-        let result = self
-            .request("initialize", Some(params), "initialize")
-            .await?;
-        let answer: Initialize =
-            serde_json::from_value(result).map_err(|source| McpError::Parse { source })?;
-
-        self.notify("notifications/initialized").await?;
-
-        Ok(answer)
-    }
-
-    /// Asks the server for the [`Tool`]s it offers.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the server does not answer.
-    pub async fn list_tools(&mut self) -> Result<Vec<Tool>, McpError> {
-        self.tools_changed = false;
-        let mut tools = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut seen_cursors = HashSet::new();
-
-        loop {
-            let params = cursor
-                .as_ref()
-                .map(|cursor| serde_json::json!({ "cursor": cursor }));
-            let result = self.request("tools/list", params, "tools/list").await?;
-            let answer: Tools =
-                serde_json::from_value(result).map_err(|source| McpError::Parse { source })?;
-            tools.extend(answer.tools);
-
-            match answer.next_cursor {
-                Some(next) if !seen_cursors.insert(next.clone()) => {
-                    return Err(McpError::Failed {
-                        subject: "tools/list".to_string(),
-                        message: format!("the server repeated pagination cursor {next:?}"),
-                    });
-                }
-                Some(next) => cursor = Some(next),
-                None => return Ok(tools),
-            }
-        }
-    }
-
-    /// Returns and clears the server's tool-list-changed notification flag.
-    pub fn take_tools_changed(&mut self) -> bool {
-        std::mem::take(&mut self.tools_changed)
-    }
-
-    /// Calls a [`Tool`] of the server and returns what it answered.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the server does not answer.
-    pub async fn call_tool(
-        &mut self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<String, McpError> {
-        let params = serde_json::json!({ "name": name, "arguments": arguments });
-
-        let subject = format!("tool {name}");
-        let result = self.request("tools/call", Some(params), &subject).await?;
-
-        Ok(result_text(&result))
-    }
-
-    /// Sends a request and waits for the answer that carries its identifier.
-    async fn request(
-        &mut self,
-        method: &str,
-        params: Option<serde_json::Value>,
-        subject: &str,
-    ) -> Result<serde_json::Value, McpError> {
-        self.next_id += 1;
-        let id = self.next_id;
-
-        let request = Request {
-            jsonrpc: "2.0",
-            id,
-            method: method.to_string(),
-            params,
-        };
-
-        self.write(&serde_json::to_string(&request).map_err(|source| McpError::Parse { source })?)
-            .await?;
-
-        self.wait_for(id, subject).await
-    }
-
-    /// Sends a notification, which the server does not answer.
-    async fn notify(&mut self, method: &str) -> Result<(), McpError> {
-        let notification = Notification {
-            jsonrpc: "2.0",
-            method: method.to_string(),
-        };
-
-        self.write(
-            &serde_json::to_string(&notification).map_err(|source| McpError::Parse { source })?,
-        )
-        .await
-    }
-
-    /// Writes a message to the server.
-    async fn write(&mut self, line: &str) -> Result<(), McpError> {
-        self.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|source| McpError::Write { source })?;
-        self.stdin
-            .write_all(b"\n")
-            .await
-            .map_err(|source| McpError::Write { source })?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|source| McpError::Write { source })?;
-        Ok(())
-    }
-
-    /// Reads messages until the answer of the given request shows up.
-    async fn wait_for(&mut self, id: u64, subject: &str) -> Result<serde_json::Value, McpError> {
-        loop {
-            let Some(line) = self.next_line().await? else {
-                return Err(McpError::Closed {
-                    stderr: self.stderr_text(),
-                });
-            };
-
-            match read_reply(&line, id) {
-                Some(Reply::Answer(result)) => return Ok(result),
-                Some(Reply::Failed(failure)) => {
-                    return Err(McpError::Failed {
-                        subject: subject.to_string(),
-                        message: format!("{} ({})", failure.message, failure.code),
-                    });
-                }
-                Some(Reply::Refuse { id, method }) => self.refuse(&id, &method).await?,
-                Some(Reply::Notification { method }) => {
-                    if method == "notifications/tools/list_changed" {
-                        self.tools_changed = true;
-                    }
-                }
-                Some(Reply::Skip) | None => {}
-            }
-        }
-    }
-
-    /// Reads the next line the server writes.
-    async fn next_line(&mut self) -> Result<Option<String>, McpError> {
-        let mut line = String::new();
-        let read = self
-            .reader
-            .read_line(&mut line)
-            .await
-            .map_err(|source| McpError::Read { source })?;
-
-        if read == 0 {
-            return Ok(None);
-        }
-
-        Ok(Some(line))
-    }
-
-    /// Answers a request of the server, which gareth does not serve.
-    async fn refuse(&mut self, id: &serde_json::Value, method: &str) -> Result<(), McpError> {
-        let answer = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": { "code": METHOD_NOT_FOUND, "message": format!("gareth does not serve {method}") },
-        });
-
-        self.write(&answer.to_string()).await
-    }
-
-    /// Returns what the server wrote to its standard error.
-    fn stderr_text(&self) -> String {
-        self.stderr
-            .lock()
-            .map(|text| text.clone())
-            .unwrap_or_default()
     }
 }
 
-/// An active stdio or Streamable HTTP MCP client.
-pub enum Client {
-    Stdio(StdioClient),
-    Http(HttpClient),
+impl ClientHandler for GarethClientHandler {
+    fn get_info(&self) -> ClientConfig {
+        self.info.clone()
+    }
+
+    fn on_tool_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + MaybeSendFuture + '_ {
+        self.tools_changed.store(true, Ordering::Release);
+        std::future::ready(())
+    }
 }
 
-/// Running Streamable HTTP client service.
-pub struct HttpClient {
-    service: RunningService<RoleClient, ClientConfig>,
+/// A running MCP client for either stdio or Streamable HTTP.
+pub struct Client {
+    service: RunningService<RoleClient, GarethClientHandler>,
+    tools_changed: Arc<AtomicBool>,
+    stderr: Arc<std::sync::Mutex<String>>,
 }
 
 impl Client {
     /// Connects using the transport specified in the server configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the child process cannot start or MCP initialization fails.
     pub async fn start(server: &Server) -> Result<Self, McpError> {
-        match &server.transport {
-            Transport::Stdio { .. } => Ok(Self::Stdio(StdioClient::start(server).await?)),
+        let tools_changed = Arc::new(AtomicBool::new(false));
+        let stderr = Arc::new(std::sync::Mutex::new(String::new()));
+        let handler = GarethClientHandler::new(tools_changed.clone());
+        let lifecycle = ClientLifecycleMode::Auto {
+            preferred_versions: vec![ProtocolVersion::LATEST],
+            legacy_version: Some(ProtocolVersion::V_2025_11_25),
+        };
+
+        let service = match &server.transport {
+            Transport::Stdio { command, args, env } => {
+                let mut command_process = Command::new(command);
+                command_process.args(args).envs(env);
+                let (transport, child_stderr) = TokioChildProcess::builder(command_process)
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|source| McpError::Start {
+                        command: command.clone(),
+                        source,
+                    })?;
+                if let Some(child_stderr) = child_stderr {
+                    tokio::spawn(capture_stderr(child_stderr, stderr.clone()));
+                }
+                handler
+                    .serve_with_lifecycle(transport, lifecycle)
+                    .await
+                    .map_err(|err| McpError::Transport {
+                        message: error_with_stderr(err.to_string(), &stderr),
+                    })?
+            }
             Transport::Http { url, headers } => {
                 let parsed_headers = parse_http_headers(headers)?;
                 let transport = StreamableHttpClientTransport::from_config(
                     StreamableHttpClientTransportConfig::with_uri(url.clone())
                         .custom_headers(parsed_headers),
                 );
-                let client_info = ClientConfig::new(
-                    ClientCapabilities::default(),
-                    Implementation::new(CLIENT_NAME, CLIENT_VERSION),
-                );
-                let service = client_info
-                    .serve_with_lifecycle(
-                        transport,
-                        ClientLifecycleMode::Auto {
-                            preferred_versions: vec![ProtocolVersion::LATEST],
-                            legacy_version: Some(ProtocolVersion::V_2025_11_25),
-                        },
-                    )
+                handler
+                    .serve_with_lifecycle(transport, lifecycle)
                     .await
                     .map_err(|err| McpError::Transport {
-                        message: err.to_string(),
-                    })?;
-                Ok(Self::Http(HttpClient { service }))
+                        message: error_with_stderr(err.to_string(), &stderr),
+                    })?
             }
-        }
+        };
+
+        Ok(Self {
+            service,
+            tools_changed,
+            stderr,
+        })
     }
 
-    /// Initializes or retrieves the HTTP peer metadata.
+    /// Returns the identity, protocol version, and instructions of the server.
     pub async fn initialize(&mut self) -> Result<Initialize, McpError> {
-        match self {
-            Self::Stdio(client) => client.initialize().await,
-            Self::Http(client) => {
-                let info = client
-                    .service
-                    .peer_info()
-                    .ok_or_else(|| McpError::Transport {
-                        message: "server did not provide peer information".into(),
-                    })?;
-                let server = info.server_info.as_ref();
-                Ok(Initialize {
-                    protocol_version: info.protocol_version.to_string(),
-                    server_info: super::protocol::ServerInfo {
-                        name: server
-                            .map(|s| s.name.clone())
-                            .unwrap_or_else(|| "MCP server".into()),
-                        version: server.map(|s| s.version.clone()).unwrap_or_default(),
-                    },
-                    instructions: info.instructions.clone(),
-                })
-            }
-        }
+        let info = self
+            .service
+            .peer_info()
+            .ok_or_else(|| McpError::Transport {
+                message: "server did not provide peer information".into(),
+            })?;
+        let server = info.server_info.as_ref();
+        Ok(Initialize {
+            protocol_version: info.protocol_version.to_string(),
+            server_info: super::protocol::ServerInfo {
+                name: server
+                    .map(|server| server.name.clone())
+                    .unwrap_or_else(|| "MCP server".into()),
+                version: server
+                    .map(|server| server.version.clone())
+                    .unwrap_or_default(),
+            },
+            instructions: info.instructions.clone(),
+        })
     }
 
-    /// Lists all tools from the connected server.
+    /// Lists every tool offered by the connected server.
     pub async fn list_tools(&mut self) -> Result<Vec<Tool>, McpError> {
-        match self {
-            Self::Stdio(client) => client.list_tools().await,
-            Self::Http(client) => {
-                let listed =
-                    client
-                        .service
-                        .list_all_tools()
-                        .await
-                        .map_err(|err| McpError::Transport {
-                            message: err.to_string(),
-                        })?;
-                listed
-                    .into_iter()
-                    .map(|tool| {
-                        let schema = serde_json::to_value(&tool.input_schema)
-                            .map_err(|source| McpError::Parse { source })?;
-                        Ok(Tool {
-                            name: tool.name.to_string(),
-                            description: tool
-                                .description
-                                .map(|value| value.to_string())
-                                .unwrap_or_default(),
-                            input_schema: Some(schema),
-                        })
-                    })
-                    .collect()
-            }
-        }
+        self.tools_changed.store(false, Ordering::Release);
+        self.service
+            .list_all_tools()
+            .await
+            .map_err(|err| McpError::Transport {
+                message: error_with_stderr(err.to_string(), &self.stderr),
+            })?
+            .into_iter()
+            .map(|tool| {
+                let input_schema = serde_json::to_value(&tool.input_schema)
+                    .map_err(|source| McpError::Parse { source })?;
+                Ok(Tool {
+                    name: tool.name.to_string(),
+                    description: tool
+                        .description
+                        .map(|description| description.to_string())
+                        .unwrap_or_default(),
+                    input_schema: Some(input_schema),
+                })
+            })
+            .collect()
     }
 
-    /// Checks whether the server announced a tool-list change.
+    /// Returns and clears the server's tool-list-changed notification flag.
     pub fn take_tools_changed(&mut self) -> bool {
-        match self {
-            Self::Stdio(client) => client.take_tools_changed(),
-            Self::Http(_) => false,
-        }
+        self.tools_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Calls a tool and returns its text content.
@@ -494,30 +242,53 @@ impl Client {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<String, McpError> {
-        match self {
-            Self::Stdio(client) => client.call_tool(name, arguments).await,
-            Self::Http(client) => {
-                let arguments = arguments
-                    .as_object()
-                    .cloned()
-                    .ok_or_else(|| McpError::Failed {
-                        subject: format!("tool {name}"),
-                        message: "tool arguments must be a JSON object".into(),
-                    })?;
-                let result = client
-                    .service
-                    .call_tool(
-                        CallToolRequestParams::new(name.to_string()).with_arguments(arguments),
-                    )
-                    .await
-                    .map_err(|err| McpError::Transport {
-                        message: err.to_string(),
-                    })?;
-                let value =
-                    serde_json::to_value(result).map_err(|source| McpError::Parse { source })?;
-                Ok(result_text(&value))
-            }
+        let arguments = arguments
+            .as_object()
+            .cloned()
+            .ok_or_else(|| McpError::Failed {
+                subject: format!("tool {name}"),
+                message: "tool arguments must be a JSON object".into(),
+            })?;
+        let result = self
+            .service
+            .call_tool(CallToolRequestParams::new(name.to_string()).with_arguments(arguments))
+            .await
+            .map_err(|err| McpError::Transport {
+                message: error_with_stderr(err.to_string(), &self.stderr),
+            })?;
+        let value = serde_json::to_value(result).map_err(|source| McpError::Parse { source })?;
+        Ok(result_text(&value))
+    }
+}
+
+async fn capture_stderr(stderr: ChildStderr, buffer: Arc<std::sync::Mutex<String>>) {
+    let mut lines = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let mut text = buffer.lock().unwrap_or_else(|error| error.into_inner());
+        text.push_str(&line);
+        text.push('\n');
+        if text.len() > MAX_STDERR_BYTES {
+            let excess = text.len() - MAX_STDERR_BYTES;
+            let boundary = text
+                .char_indices()
+                .find(|(index, _)| *index >= excess)
+                .map(|(index, _)| index)
+                .unwrap_or(text.len());
+            text.drain(..boundary);
         }
+    }
+}
+
+fn error_with_stderr(error: String, stderr: &std::sync::Mutex<String>) -> String {
+    let details = stderr
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .trim()
+        .to_string();
+    if details.is_empty() {
+        error
+    } else {
+        format!("{error}; server stderr: {details}")
     }
 }
 
@@ -563,6 +334,36 @@ fn parse_http_headers(
         parsed.insert(name, value);
     }
     Ok(parsed)
+}
+
+/// Turns an MCP tool result into the text the model reads.
+pub fn result_text(result: &serde_json::Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(content) = result.get("content").and_then(serde_json::Value::as_array) {
+        for item in content {
+            match item.get("text").and_then(serde_json::Value::as_str) {
+                Some(text) => parts.push(text.to_string()),
+                None => parts.push(item.to_string()),
+            }
+        }
+    }
+
+    let text = if parts.is_empty() {
+        result.to_string()
+    } else {
+        parts.join("\n")
+    };
+
+    if result
+        .get("isError")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return format!("The tool failed: {text}");
+    }
+
+    text
 }
 
 #[cfg(test)]
@@ -614,108 +415,6 @@ mod http_config_tests {
     }
 }
 
-impl Drop for StdioClient {
-    fn drop(&mut self) {
-        // The server stops when gareth is done with it.
-        let _ = self.child.start_kill();
-    }
-}
-
-/// Reads the standard error of the server, so it never blocks.
-async fn drain(pipe: ChildStderr, buffer: Arc<Mutex<String>>) {
-    let mut lines = BufReader::new(pipe).lines();
-
-    while let Ok(Some(line)) = lines.next_line().await {
-        let mut text = buffer.lock().unwrap_or_else(|err| err.into_inner());
-        text.push_str(&line);
-        text.push('\n');
-    }
-}
-
-/// What a message from the server means.
-#[derive(Debug)]
-enum Reply {
-    /// The answer of the request that is being waited for.
-    Answer(serde_json::Value),
-    /// The answer of a request that failed.
-    Failed(Failure),
-    /// A message that is not the answer.
-    Skip,
-    /// A request of the server that gareth does not serve.
-    Refuse {
-        /// The identifier the answer must carry.
-        id: serde_json::Value,
-        /// The method the server asks for.
-        method: String,
-    },
-    /// A notification sent by the server.
-    Notification {
-        /// The notification method.
-        method: String,
-    },
-}
-
-/// Reads what a line written by the server means.
-///
-/// A request of the server has an identifier and a method, and a notification
-/// has only a method. Lines that are not part of the protocol are skipped, and
-/// the answers of other requests are left alone.
-fn read_reply(line: &str, id: u64) -> Option<Reply> {
-    let message: Message = serde_json::from_str(line).ok()?;
-
-    if let (Some(answer), Some(method)) = (&message.id, &message.method) {
-        return Some(Reply::Refuse {
-            id: answer.clone(),
-            method: method.clone(),
-        });
-    }
-
-    if let Some(method) = message.method {
-        return Some(Reply::Notification { method });
-    }
-
-    match message.id {
-        None => Some(Reply::Skip),
-        Some(answer) if answer != serde_json::json!(id) => Some(Reply::Skip),
-        Some(_) => match message.error {
-            Some(failure) => Some(Reply::Failed(failure)),
-            None => Some(Reply::Answer(
-                message.result.unwrap_or(serde_json::Value::Null),
-            )),
-        },
-    }
-}
-
-/// Turns the answer of a tool into the text the model reads.
-pub fn result_text(result: &serde_json::Value) -> String {
-    let mut parts: Vec<String> = Vec::new();
-
-    if let Some(content) = result.get("content").and_then(serde_json::Value::as_array) {
-        for item in content {
-            match item.get("text").and_then(serde_json::Value::as_str) {
-                Some(text) => parts.push(text.to_string()),
-                None => parts.push(item.to_string()),
-            }
-        }
-    }
-
-    let text = if parts.is_empty() {
-        result.to_string()
-    } else {
-        parts.join("\n")
-    };
-
-    if result
-        .get("isError")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        return format!("The tool failed: {text}");
-    }
-
-    text
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,82 +461,76 @@ mod tests {
         assert_eq!(result_text(&result), "The tool failed: it broke");
     }
 
-    #[test]
-    fn ignores_a_line_that_is_not_part_of_the_protocol() {
-        assert!(read_reply("the server is starting", 1).is_none());
-        assert!(read_reply("", 1).is_none());
-        assert!(read_reply("{not json", 1).is_none());
-    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_transport_initializes_lists_and_invokes_with_an_embedded_mock_server() {
+        let script = r#"
+printf 'fixture stderr diagnostic\n' >&2
+while IFS= read -r request; do
+  id=$(printf '%s\n' "$request" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$request" in
+    *'"method":"server/discover"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"legacy MCP server"}}\n' "$id"
+      ;;
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"stdio-fixture","version":"1"},"instructions":"Use the fixture tool."}}\n' "$id"
+      ;;
+    *'"method":"tools/list"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"fixture_echo","description":"Echo fixture input","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}}\n' "$id"
+      ;;
+    *'"method":"tools/call"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$GARETH_FIXTURE_MESSAGE"
+      ;;
+  esac
+done
+"#;
+        let server = Server {
+            transport: Transport::Stdio {
+                command: "/bin/sh".into(),
+                args: vec!["-c".into(), script.into()],
+                env: [(
+                    "GARETH_FIXTURE_MESSAGE".into(),
+                    "stdio fixture called".into(),
+                )]
+                .into_iter()
+                .collect(),
+            },
+        };
 
-    #[test]
-    fn reads_a_notification() {
-        let reply = read_reply(r#"{"jsonrpc":"2.0","method":"notifications/progress"}"#, 1);
-        assert!(matches!(
-            reply,
-            Some(Reply::Notification { method }) if method == "notifications/progress"
-        ));
-    }
+        let mut client = Client::start(&server).await.unwrap();
+        let info = client.initialize().await.unwrap();
+        assert_eq!(info.server_info.name, "stdio-fixture");
+        assert_eq!(info.instructions.as_deref(), Some("Use the fixture tool."));
 
-    #[test]
-    fn reads_a_tools_list_changed_notification() {
-        let reply = read_reply(
-            r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#,
-            1,
+        let tools = client.list_tools().await.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "fixture_echo");
+        assert_eq!(tools[0].description, "Echo fixture input");
+        assert_eq!(
+            tools[0].parameters()["properties"]["text"]["type"],
+            "string"
         );
-        assert!(matches!(
-            reply,
-            Some(Reply::Notification { method }) if method == "notifications/tools/list_changed"
-        ));
-    }
 
-    #[test]
-    fn refuses_a_request_of_the_server() {
-        let reply = read_reply(r#"{"jsonrpc":"2.0","id":9,"method":"roots/list"}"#, 1);
-        match reply {
-            Some(Reply::Refuse { id, method }) => {
-                assert_eq!(method, "roots/list");
-                assert_eq!(id, serde_json::json!(9));
-            }
-            other => panic!("expected a refusal, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn skips_the_answer_of_another_request() {
-        let reply = read_reply(r#"{"jsonrpc":"2.0","id":7,"result":{"ok":true}}"#, 1);
-        assert!(matches!(reply, Some(Reply::Skip)));
-    }
-
-    #[test]
-    fn reads_the_answer_of_the_request() {
-        let reply = read_reply(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#, 1);
-        match reply {
-            Some(Reply::Answer(result)) => assert_eq!(result["ok"], serde_json::json!(true)),
-            other => panic!("expected an answer, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn reads_an_answer_without_a_result() {
-        let reply = read_reply(r#"{"jsonrpc":"2.0","id":1}"#, 1);
-        match reply {
-            Some(Reply::Answer(result)) => assert!(result.is_null()),
-            other => panic!("expected an answer, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn reads_the_failure_of_the_request() {
-        let reply = read_reply(
-            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"tool not found"}}"#,
-            1,
+        let result = client
+            .call_tool("fixture_echo", serde_json::json!({ "text": "test" }))
+            .await
+            .unwrap();
+        assert_eq!(result, "stdio fixture called");
+        assert!(
+            client
+                .stderr
+                .lock()
+                .unwrap()
+                .contains("fixture stderr diagnostic")
         );
-        match reply {
-            Some(Reply::Failed(failure)) => {
-                assert_eq!(failure.message, "tool not found");
-                assert_eq!(failure.code, -32602);
-            }
-            other => panic!("expected a failure, got {other:?}"),
-        }
+    }
+
+    #[test]
+    fn appends_captured_stderr_to_transport_errors() {
+        let stderr = std::sync::Mutex::new("useful child diagnostic\n".into());
+        let error = error_with_stderr("MCP initialization failed".into(), &stderr);
+        assert!(error.contains("MCP initialization failed"));
+        assert!(error.contains("useful child diagnostic"));
     }
 }

@@ -1,57 +1,6 @@
-//! The messages of the Model Context Protocol.
+//! MCP data Gareth passes to its agent layer.
 
-use serde::{Deserialize, Serialize};
-
-/// A request sent to the server.
-#[derive(Debug, Serialize)]
-pub struct Request {
-    /// The version of JSON-RPC.
-    pub jsonrpc: &'static str,
-    /// The identifier of the request.
-    pub id: u64,
-    /// The method to call.
-    pub method: String,
-    /// The parameters of the method.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<serde_json::Value>,
-}
-
-/// A notification sent to the server, which expects no answer.
-#[derive(Debug, Serialize)]
-pub struct Notification {
-    /// The version of JSON-RPC.
-    pub jsonrpc: &'static str,
-    /// The method to call.
-    pub method: String,
-}
-
-/// A message read from the server.
-#[derive(Debug, Deserialize)]
-pub struct Message {
-    /// The identifier of the request it answers.
-    #[serde(default)]
-    pub id: Option<serde_json::Value>,
-    /// The method, when the server asks for something.
-    #[serde(default)]
-    pub method: Option<String>,
-    /// The result of the call.
-    #[serde(default)]
-    pub result: Option<serde_json::Value>,
-    /// The error the call failed with.
-    #[serde(default)]
-    pub error: Option<Failure>,
-}
-
-/// The error a call failed with.
-#[derive(Debug, Deserialize)]
-pub struct Failure {
-    /// The code of the error.
-    #[serde(default)]
-    pub code: i64,
-    /// What went wrong.
-    #[serde(default)]
-    pub message: String,
-}
+use serde::Deserialize;
 
 /// What the server says about itself.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -112,65 +61,9 @@ impl Tool {
     }
 }
 
-/// The answer of the tools/list method.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Tools {
-    /// The tools the server offers.
-    #[serde(default)]
-    pub tools: Vec<Tool>,
-    /// Cursor for the next page of tools, when the server paginates results.
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn writes_a_request_with_its_identifier() {
-        let request = Request {
-            jsonrpc: "2.0",
-            id: 3,
-            method: "tools/list".to_string(),
-            params: Some(serde_json::json!({ "cursor": "next" })),
-        };
-
-        let value = serde_json::to_value(&request).unwrap();
-
-        assert_eq!(value["jsonrpc"], "2.0");
-        assert_eq!(value["id"], 3);
-        assert_eq!(value["method"], "tools/list");
-        assert_eq!(value["params"]["cursor"], "next");
-    }
-
-    #[test]
-    fn writes_a_request_without_parameters() {
-        let request = Request {
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/list".to_string(),
-            params: None,
-        };
-
-        let value = serde_json::to_value(&request).unwrap();
-
-        assert!(value.get("params").is_none());
-    }
-
-    #[test]
-    fn writes_a_notification_without_an_identifier() {
-        let notification = Notification {
-            jsonrpc: "2.0",
-            method: "notifications/initialized".to_string(),
-        };
-
-        let value = serde_json::to_value(&notification).unwrap();
-
-        assert_eq!(value["method"], "notifications/initialized");
-        assert!(value.get("id").is_none());
-    }
 
     #[test]
     fn reads_the_answer_of_the_server() {
@@ -194,24 +87,6 @@ mod tests {
         assert_eq!(answer.protocol_version, "");
         assert_eq!(answer.server_info.name, "");
         assert!(answer.instructions.is_none());
-    }
-
-    #[test]
-    fn reads_the_tools_of_the_server() {
-        let answer: Tools = serde_json::from_value(serde_json::json!({
-            "tools": [{
-                "name": "nix",
-                "description": "Query NixOS",
-                "inputSchema": { "type": "object", "properties": { "action": {} } }
-            }]
-        }))
-        .unwrap();
-
-        assert_eq!(answer.tools.len(), 1);
-        assert_eq!(answer.tools[0].name, "nix");
-        assert_eq!(answer.tools[0].description, "Query NixOS");
-        let schema = answer.tools[0].input_schema.as_ref().unwrap();
-        assert!(schema["properties"]["action"].is_object());
     }
 
     #[test]
