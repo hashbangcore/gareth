@@ -1,5 +1,10 @@
 //! Helpers to tokenize text and to shape the blocks of a prompt.
 
+/// Replaces literal `\\n` sequences with line breaks.
+pub fn unescape_newlines(input: &str) -> String {
+    input.replace("\\n", "\n")
+}
+
 /// Splits a command line into arguments, honoring quotes and backslash escapes.
 pub fn split_args(input: &str) -> Vec<String> {
     let mut args = Vec::new();
@@ -90,6 +95,16 @@ pub fn indent_block(content: &str, prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_literal_newline_escapes() {
+        assert_eq!(
+            unescape_newlines(r"first\nsecond\nthird"),
+            "first\nsecond\nthird"
+        );
+        assert_eq!(unescape_newlines("first\nsecond"), "first\nsecond");
+        assert_eq!(unescape_newlines(r"first\tsecond"), r"first\tsecond");
+    }
 
     #[test]
     fn splits_quotes_and_escapes() {

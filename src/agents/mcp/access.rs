@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::core;
-use crate::util::terminal;
+use crate::util::{terminal, text};
 
 use super::client::Client;
 use super::config::{Config, ConfigError, Transport};
@@ -373,10 +373,11 @@ fn print_tools(tools: &[Tool], server: &Initialize) {
 
 /// Prints the answer of the model.
 fn print_answer(args: &core::Cli, text: &str) {
+    let text = text::unescape_newlines(text);
     if args.verbose {
         terminal::print_labeled("LLM", text.trim());
     } else {
-        println!("{}", terminal::render_markdown(text));
+        println!("{}", terminal::render_markdown(&text));
     }
 }
 
