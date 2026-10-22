@@ -1,5 +1,6 @@
 //! A client of the Model Context Protocol, talking over stdio.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io;
 use std::process::Stdio;
@@ -110,6 +111,8 @@ pub struct Client {
     stderr: Arc<Mutex<String>>,
     /// The identifier of the next request.
     next_id: u64,
+    /// Whether the server announced that its tool list changed.
+    tools_changed: bool,
 }
 
 impl Client {
@@ -130,13 +133,10 @@ impl Client {
             command.env(key, value);
         }
 
-        let mut child =
-            command
-                .spawn()
-                .map_err(|source| McpError::Start {
-                    command: server.command.clone(),
-                    source,
-                })?;
+        let mut child = command.spawn().map_err(|source| McpError::Start {
+            command: server.command.clone(),
+            source,
+        })?;
 
         let stdin = child.stdin.take().ok_or(McpError::Pipe)?;
         let stdout = child.stdout.take().ok_or(McpError::Pipe)?;
@@ -151,6 +151,7 @@ impl Client {
             reader: BufReader::new(stdout),
             stderr: buffer,
             next_id: 0,
+            tools_changed: false,
         })
     }
 
@@ -165,7 +166,7 @@ impl Client {
     pub async fn initialize(&mut self) -> Result<Initialize, McpError> {
         let params = serde_json::json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
+            "capabilities": { "tools": { "listChanged": true } },
             "clientInfo": { "name": CLIENT_NAME, "version": CLIENT_VERSION },
         });
 
@@ -186,11 +187,36 @@ impl Client {
     ///
     /// Returns an error when the server does not answer.
     pub async fn list_tools(&mut self) -> Result<Vec<Tool>, McpError> {
-        let result = self.request("tools/list", None, "tools/list").await?;
-        let answer: Tools =
-            serde_json::from_value(result).map_err(|source| McpError::Parse { source })?;
+        self.tools_changed = false;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = HashSet::new();
 
-        Ok(answer.tools)
+        loop {
+            let params = cursor
+                .as_ref()
+                .map(|cursor| serde_json::json!({ "cursor": cursor }));
+            let result = self.request("tools/list", params, "tools/list").await?;
+            let answer: Tools =
+                serde_json::from_value(result).map_err(|source| McpError::Parse { source })?;
+            tools.extend(answer.tools);
+
+            match answer.next_cursor {
+                Some(next) if !seen_cursors.insert(next.clone()) => {
+                    return Err(McpError::Failed {
+                        subject: "tools/list".to_string(),
+                        message: format!("the server repeated pagination cursor {next:?}"),
+                    });
+                }
+                Some(next) => cursor = Some(next),
+                None => return Ok(tools),
+            }
+        }
+    }
+
+    /// Returns and clears the server's tool-list-changed notification flag.
+    pub fn take_tools_changed(&mut self) -> bool {
+        std::mem::take(&mut self.tools_changed)
     }
 
     /// Calls a [`Tool`] of the server and returns what it answered.
@@ -228,10 +254,8 @@ impl Client {
             params,
         };
 
-        self.write(&serde_json::to_string(&request).map_err(|source| McpError::Parse {
-            source,
-        })?)
-        .await?;
+        self.write(&serde_json::to_string(&request).map_err(|source| McpError::Parse { source })?)
+            .await?;
 
         self.wait_for(id, subject).await
     }
@@ -243,9 +267,9 @@ impl Client {
             method: method.to_string(),
         };
 
-        self.write(&serde_json::to_string(&notification).map_err(|source| {
-            McpError::Parse { source }
-        })?)
+        self.write(
+            &serde_json::to_string(&notification).map_err(|source| McpError::Parse { source })?,
+        )
         .await
     }
 
@@ -284,6 +308,11 @@ impl Client {
                     });
                 }
                 Some(Reply::Refuse { id, method }) => self.refuse(&id, &method).await?,
+                Some(Reply::Notification { method }) => {
+                    if method == "notifications/tools/list_changed" {
+                        self.tools_changed = true;
+                    }
+                }
                 Some(Reply::Skip) | None => {}
             }
         }
@@ -359,6 +388,11 @@ enum Reply {
         /// The method the server asks for.
         method: String,
     },
+    /// A notification sent by the server.
+    Notification {
+        /// The notification method.
+        method: String,
+    },
 }
 
 /// Reads what a line written by the server means.
@@ -376,12 +410,18 @@ fn read_reply(line: &str, id: u64) -> Option<Reply> {
         });
     }
 
+    if let Some(method) = message.method {
+        return Some(Reply::Notification { method });
+    }
+
     match message.id {
         None => Some(Reply::Skip),
         Some(answer) if answer != serde_json::json!(id) => Some(Reply::Skip),
         Some(_) => match message.error {
             Some(failure) => Some(Reply::Failed(failure)),
-            None => Some(Reply::Answer(message.result.unwrap_or(serde_json::Value::Null))),
+            None => Some(Reply::Answer(
+                message.result.unwrap_or(serde_json::Value::Null),
+            )),
         },
     }
 }
@@ -470,9 +510,24 @@ mod tests {
     }
 
     #[test]
-    fn skips_a_notification() {
+    fn reads_a_notification() {
         let reply = read_reply(r#"{"jsonrpc":"2.0","method":"notifications/progress"}"#, 1);
-        assert!(matches!(reply, Some(Reply::Skip)));
+        assert!(matches!(
+            reply,
+            Some(Reply::Notification { method }) if method == "notifications/progress"
+        ));
+    }
+
+    #[test]
+    fn reads_a_tools_list_changed_notification() {
+        let reply = read_reply(
+            r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#,
+            1,
+        );
+        assert!(matches!(
+            reply,
+            Some(Reply::Notification { method }) if method == "notifications/tools/list_changed"
+        ));
     }
 
     #[test]

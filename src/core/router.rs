@@ -376,15 +376,20 @@ impl Service {
             tools: Vec::new(),
         };
 
-        let response = self.post(&body).send().await.map_err(|source| {
-            ServiceError::Transport {
+        let response = self
+            .post(&body)
+            .send()
+            .await
+            .map_err(|source| ServiceError::Transport {
                 endpoint: self.endpoint.clone(),
                 source,
-            }
-        })?;
+            })?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|source| ServiceError::Read { source })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|source| ServiceError::Read { source })?;
 
         let parsed = parse_response(status, &body);
         if parsed.is_err() {
@@ -419,15 +424,20 @@ impl Service {
 
         send_trace(":: REQUEST ::", &describe(messages, tools)).await;
 
-        let response = self.post(&request).send().await.map_err(|source| {
-            ServiceError::Transport {
-                endpoint: self.endpoint.clone(),
-                source,
-            }
-        })?;
+        let response =
+            self.post(&request)
+                .send()
+                .await
+                .map_err(|source| ServiceError::Transport {
+                    endpoint: self.endpoint.clone(),
+                    source,
+                })?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|source| ServiceError::Read { source })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|source| ServiceError::Read { source })?;
 
         let parsed = parse_turn(status, &body);
         if parsed.is_err() {

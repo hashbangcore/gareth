@@ -164,12 +164,11 @@ fn parse(path: &Path, text: &str) -> Result<Config, ConfigError> {
     let mut out = BTreeMap::new();
 
     for (name, raw) in map {
-        let raw: RawServer = serde_json::from_value(raw.clone()).map_err(|source| {
-            ConfigError::Shape {
+        let raw: RawServer =
+            serde_json::from_value(raw.clone()).map_err(|source| ConfigError::Shape {
                 path: path.to_path_buf(),
                 reason: format!("the server {name} is wrong: {source}"),
-            }
-        })?;
+            })?;
 
         out.insert(
             name.clone(),
@@ -241,7 +240,12 @@ mod tests {
         let config = parse(Path::new("mcp.json"), text).unwrap();
 
         assert_eq!(
-            config.server("nixos").unwrap().env.get("KEY").map(String::as_str),
+            config
+                .server("nixos")
+                .unwrap()
+                .env
+                .get("KEY")
+                .map(String::as_str),
             Some("value")
         );
     }
@@ -269,7 +273,10 @@ mod tests {
 
         let err = config.server("vulnx").unwrap_err();
 
-        assert_eq!(err.to_string(), "no server named vulnx, the configuration has nixos");
+        assert_eq!(
+            err.to_string(),
+            "no server named vulnx, the configuration has nixos"
+        );
     }
 
     #[test]

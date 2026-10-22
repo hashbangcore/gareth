@@ -80,7 +80,7 @@ pub struct Initialize {
 }
 
 /// A tool the server offers.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     /// The name of the tool.
@@ -114,10 +114,14 @@ impl Tool {
 
 /// The answer of the tools/list method.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tools {
     /// The tools the server offers.
     #[serde(default)]
     pub tools: Vec<Tool>,
+    /// Cursor for the next page of tools, when the server paginates results.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
 }
 
 #[cfg(test)]

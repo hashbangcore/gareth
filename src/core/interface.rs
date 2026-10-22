@@ -168,9 +168,8 @@ mod tests {
 
     #[test]
     fn reads_the_server_and_the_question() {
-        let (server, prompt) = mcp_options(&[
-            "gareth", "mcp", "nixos", "how", "to", "install", "neovim",
-        ]);
+        let (server, prompt) =
+            mcp_options(&["gareth", "mcp", "nixos", "how", "to", "install", "neovim"]);
         assert_eq!(server.as_deref(), Some("nixos"));
         assert_eq!(prompt, vec!["how", "to", "install", "neovim"]);
     }
@@ -185,7 +184,13 @@ mod tests {
     #[test]
     fn reads_the_flags_of_the_mcp_command() {
         let cli = Cli::try_parse_from(["gareth", "mcp", "--list"]).unwrap();
-        let Some(Commands::Mcp { list, tools, config, .. }) = cli.command else {
+        let Some(Commands::Mcp {
+            list,
+            tools,
+            config,
+            ..
+        }) = cli.command
+        else {
             panic!("expected an mcp command");
         };
         assert!(list);
