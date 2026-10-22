@@ -6,7 +6,7 @@ use crate::core;
 use crate::util::terminal;
 
 use super::client::Client;
-use super::config::{Config, ConfigError};
+use super::config::{Config, ConfigError, Transport};
 use super::protocol::{Initialize, Tool};
 
 /// The number of times the model may call tools before gareth gives up.
@@ -343,7 +343,10 @@ fn list_servers(config: &Config, path: &Path) {
     }
 
     for (name, server) in &config.servers {
-        println!("{name}: {}", server.command);
+        match &server.transport {
+            Transport::Stdio { command, .. } => println!("{name}: {command}"),
+            Transport::Http { url, .. } => println!("{name}: {url}"),
+        }
     }
 }
 

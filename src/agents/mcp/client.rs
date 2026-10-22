@@ -1,15 +1,26 @@
 //! A client of the Model Context Protocol, talking over stdio.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
+use http::{HeaderName, HeaderValue};
+use rmcp::{
+    ClientLifecycleMode, ClientServiceExt, RoleClient,
+    model::{
+        CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation, ProtocolVersion,
+    },
+    service::RunningService,
+    transport::{
+        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+    },
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
-use super::config::Server;
+use super::config::{Server, Transport};
 use super::protocol::{Failure, Initialize, Message, Notification, Request, Tool, Tools};
 
 /// The version of the protocol gareth speaks.
@@ -28,6 +39,8 @@ const METHOD_NOT_FOUND: i64 = -32601;
 /// Why a call to the server could not be made.
 #[derive(Debug)]
 pub enum McpError {
+    /// The HTTP transport could not be configured or completed a request.
+    Transport { message: String },
     /// The server could not be started.
     Start {
         /// The command that was run.
@@ -69,6 +82,7 @@ pub enum McpError {
 impl fmt::Display for McpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Transport { message } => write!(f, "MCP transport failed: {message}"),
             Self::Start { command, source } => {
                 write!(f, "could not run {command}: {source}")
             }
@@ -91,6 +105,7 @@ impl fmt::Display for McpError {
 impl std::error::Error for McpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Transport { .. } => None,
             Self::Start { source, .. } => Some(source),
             Self::Write { source } | Self::Read { source } => Some(source),
             Self::Parse { source } => Some(source),
@@ -100,7 +115,7 @@ impl std::error::Error for McpError {
 }
 
 /// A running server, ready to answer.
-pub struct Client {
+pub struct StdioClient {
     /// The process of the server.
     child: Child,
     /// Where the requests are written.
@@ -115,26 +130,36 @@ pub struct Client {
     tools_changed: bool,
 }
 
-impl Client {
+impl StdioClient {
     /// Starts the server of the configuration and waits until it can be talked to.
     ///
     /// # Errors
     ///
     /// Returns an error when the server cannot be started.
-    pub async fn start(server: &Server) -> Result<Self, McpError> {
-        let mut command = Command::new(&server.command);
+    async fn start(server: &Server) -> Result<Self, McpError> {
+        let Transport::Stdio {
+            command: program,
+            args,
+            env,
+        } = &server.transport
+        else {
+            return Err(McpError::Transport {
+                message: "stdio client given a non-stdio server".into(),
+            });
+        };
+        let mut command = Command::new(program);
         command
-            .args(&server.args)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        for (key, value) in &server.env {
+        for (key, value) in env {
             command.env(key, value);
         }
 
         let mut child = command.spawn().map_err(|source| McpError::Start {
-            command: server.command.clone(),
+            command: program.clone(),
             source,
         })?;
 
@@ -354,7 +379,242 @@ impl Client {
     }
 }
 
-impl Drop for Client {
+/// An active stdio or Streamable HTTP MCP client.
+pub enum Client {
+    Stdio(StdioClient),
+    Http(HttpClient),
+}
+
+/// Running Streamable HTTP client service.
+pub struct HttpClient {
+    service: RunningService<RoleClient, ClientConfig>,
+}
+
+impl Client {
+    /// Connects using the transport specified in the server configuration.
+    pub async fn start(server: &Server) -> Result<Self, McpError> {
+        match &server.transport {
+            Transport::Stdio { .. } => Ok(Self::Stdio(StdioClient::start(server).await?)),
+            Transport::Http { url, headers } => {
+                let parsed_headers = parse_http_headers(headers)?;
+                let transport = StreamableHttpClientTransport::from_config(
+                    StreamableHttpClientTransportConfig::with_uri(url.clone())
+                        .custom_headers(parsed_headers),
+                );
+                let client_info = ClientConfig::new(
+                    ClientCapabilities::default(),
+                    Implementation::new(CLIENT_NAME, CLIENT_VERSION),
+                );
+                let service = client_info
+                    .serve_with_lifecycle(
+                        transport,
+                        ClientLifecycleMode::Auto {
+                            preferred_versions: vec![ProtocolVersion::LATEST],
+                            legacy_version: Some(ProtocolVersion::V_2025_11_25),
+                        },
+                    )
+                    .await
+                    .map_err(|err| McpError::Transport {
+                        message: err.to_string(),
+                    })?;
+                Ok(Self::Http(HttpClient { service }))
+            }
+        }
+    }
+
+    /// Initializes or retrieves the HTTP peer metadata.
+    pub async fn initialize(&mut self) -> Result<Initialize, McpError> {
+        match self {
+            Self::Stdio(client) => client.initialize().await,
+            Self::Http(client) => {
+                let info = client
+                    .service
+                    .peer_info()
+                    .ok_or_else(|| McpError::Transport {
+                        message: "server did not provide peer information".into(),
+                    })?;
+                let server = info.server_info.as_ref();
+                Ok(Initialize {
+                    protocol_version: info.protocol_version.to_string(),
+                    server_info: super::protocol::ServerInfo {
+                        name: server
+                            .map(|s| s.name.clone())
+                            .unwrap_or_else(|| "MCP server".into()),
+                        version: server.map(|s| s.version.clone()).unwrap_or_default(),
+                    },
+                    instructions: info.instructions.clone(),
+                })
+            }
+        }
+    }
+
+    /// Lists all tools from the connected server.
+    pub async fn list_tools(&mut self) -> Result<Vec<Tool>, McpError> {
+        match self {
+            Self::Stdio(client) => client.list_tools().await,
+            Self::Http(client) => {
+                let listed =
+                    client
+                        .service
+                        .list_all_tools()
+                        .await
+                        .map_err(|err| McpError::Transport {
+                            message: err.to_string(),
+                        })?;
+                listed
+                    .into_iter()
+                    .map(|tool| {
+                        let schema = serde_json::to_value(&tool.input_schema)
+                            .map_err(|source| McpError::Parse { source })?;
+                        Ok(Tool {
+                            name: tool.name.to_string(),
+                            description: tool
+                                .description
+                                .map(|value| value.to_string())
+                                .unwrap_or_default(),
+                            input_schema: Some(schema),
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// Checks whether the server announced a tool-list change.
+    pub fn take_tools_changed(&mut self) -> bool {
+        match self {
+            Self::Stdio(client) => client.take_tools_changed(),
+            Self::Http(_) => false,
+        }
+    }
+
+    /// Calls a tool and returns its text content.
+    pub async fn call_tool(
+        &mut self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<String, McpError> {
+        match self {
+            Self::Stdio(client) => client.call_tool(name, arguments).await,
+            Self::Http(client) => {
+                let arguments = arguments
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| McpError::Failed {
+                        subject: format!("tool {name}"),
+                        message: "tool arguments must be a JSON object".into(),
+                    })?;
+                let result = client
+                    .service
+                    .call_tool(
+                        CallToolRequestParams::new(name.to_string()).with_arguments(arguments),
+                    )
+                    .await
+                    .map_err(|err| McpError::Transport {
+                        message: err.to_string(),
+                    })?;
+                let value =
+                    serde_json::to_value(result).map_err(|source| McpError::Parse { source })?;
+                Ok(result_text(&value))
+            }
+        }
+    }
+}
+
+fn resolve_header_value(value: &str) -> Result<String, McpError> {
+    let mut result = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(start) = remaining.find("${") {
+        result.push_str(&remaining[..start]);
+        let expression = &remaining[start + 2..];
+        let Some(end) = expression.find('}') else {
+            return Err(McpError::Transport {
+                message: "unterminated ${...} environment reference in HTTP header".into(),
+            });
+        };
+        let name = &expression[..end];
+        if name.is_empty() {
+            return Err(McpError::Transport {
+                message: "empty environment variable name in HTTP header".into(),
+            });
+        }
+        let secret = std::env::var(name).map_err(|_| McpError::Transport {
+            message: format!("environment variable {name} referenced by an HTTP header is not set"),
+        })?;
+        result.push_str(&secret);
+        remaining = &expression[end + 1..];
+    }
+    result.push_str(remaining);
+    Ok(result)
+}
+
+fn parse_http_headers(
+    configured: &std::collections::BTreeMap<String, String>,
+) -> Result<HashMap<HeaderName, HeaderValue>, McpError> {
+    let mut parsed = HashMap::with_capacity(configured.len());
+    for (name, configured_value) in configured {
+        let value = resolve_header_value(configured_value)?;
+        let name = HeaderName::try_from(name.as_str()).map_err(|err| McpError::Transport {
+            message: format!("invalid HTTP header name: {err}"),
+        })?;
+        let value = HeaderValue::try_from(value.as_str()).map_err(|err| McpError::Transport {
+            message: format!("invalid value for HTTP header {}: {err}", name),
+        })?;
+        parsed.insert(name, value);
+    }
+    Ok(parsed)
+}
+
+#[cfg(test)]
+mod http_config_tests {
+    use super::*;
+
+    #[test]
+    fn leaves_literal_http_header_values_unchanged() {
+        assert_eq!(
+            resolve_header_value("application/json").unwrap(),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn expands_http_header_environment_references_with_literal_prefixes() {
+        let path = std::env::var("PATH").expect("test environment provides PATH");
+        assert_eq!(
+            resolve_header_value("Bearer ${PATH}").unwrap(),
+            format!("Bearer {path}")
+        );
+    }
+
+    #[test]
+    fn validates_http_header_names_and_values_before_connecting() {
+        let invalid_name = [("not a header".to_string(), "value".to_string())]
+            .into_iter()
+            .collect();
+        assert!(parse_http_headers(&invalid_name).is_err());
+
+        let invalid_value = [("x-token".to_string(), "line\nbreak".to_string())]
+            .into_iter()
+            .collect();
+        assert!(parse_http_headers(&invalid_value).is_err());
+    }
+
+    #[test]
+    fn reports_missing_http_header_environment_variables_without_leaking_values() {
+        let result = resolve_header_value("Bearer ${GARETH_TEST_MISSING_MCP_TOKEN_83F1}");
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("GARETH_TEST_MISSING_MCP_TOKEN_83F1"));
+        assert!(!error.contains("Bearer"));
+    }
+
+    #[test]
+    fn rejects_malformed_http_header_environment_references() {
+        assert!(resolve_header_value("Bearer ${TOKEN").is_err());
+        assert!(resolve_header_value("Bearer ${}").is_err());
+    }
+}
+
+impl Drop for StdioClient {
     fn drop(&mut self) {
         // The server stops when gareth is done with it.
         let _ = self.child.start_kill();

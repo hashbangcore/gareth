@@ -13,12 +13,24 @@ use crate::util::env::env_var;
 /// A server that gareth can start, as it is written in the configuration.
 #[derive(Clone, Debug)]
 pub struct Server {
-    /// The program to run.
-    pub command: String,
-    /// The arguments passed to the program.
-    pub args: Vec<String>,
-    /// The environment variables the program gets.
-    pub env: BTreeMap<String, String>,
+    /// The way to connect to this MCP server.
+    pub transport: Transport,
+}
+
+/// A supported MCP transport.
+#[derive(Clone, Debug)]
+pub enum Transport {
+    /// Spawn an MCP server and communicate over stdio.
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+    },
+    /// Connect to a Streamable HTTP endpoint.
+    Http {
+        url: String,
+        headers: BTreeMap<String, String>,
+    },
 }
 
 /// The servers of the configuration file.
@@ -90,14 +102,22 @@ impl std::error::Error for ConfigError {
 /// A server as it is written in the file.
 #[derive(Debug, Deserialize)]
 struct RawServer {
-    /// The program to run.
-    command: String,
+    /// Optional transport kind; omitted means stdio for backwards compatibility.
+    #[serde(rename = "type")]
+    transport_type: Option<String>,
+    /// The program to run for stdio servers.
+    command: Option<String>,
     /// The arguments passed to the program.
     #[serde(default)]
     args: Vec<String>,
     /// The environment variables the program gets.
     #[serde(default)]
     env: BTreeMap<String, String>,
+    /// Streamable HTTP endpoint URL.
+    url: Option<String>,
+    /// HTTP headers sent with each request.
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
 }
 
 impl Config {
@@ -170,14 +190,52 @@ fn parse(path: &Path, text: &str) -> Result<Config, ConfigError> {
                 reason: format!("the server {name} is wrong: {source}"),
             })?;
 
-        out.insert(
-            name.clone(),
-            Server {
-                command: raw.command,
-                args: raw.args,
-                env: raw.env,
-            },
-        );
+        let transport = match raw.transport_type.as_deref().unwrap_or("stdio") {
+            "stdio" | "local" => {
+                let Some(command) = raw.command else {
+                    return Err(ConfigError::Shape {
+                        path: path.to_path_buf(),
+                        reason: format!("the stdio server {name} is missing `command`"),
+                    });
+                };
+                Transport::Stdio {
+                    command,
+                    args: raw.args,
+                    env: raw.env,
+                }
+            }
+            "http" | "streamable-http" | "streamableHttp" => {
+                let Some(url) = raw.url else {
+                    return Err(ConfigError::Shape {
+                        path: path.to_path_buf(),
+                        reason: format!("the HTTP server {name} is missing `url`"),
+                    });
+                };
+                let parsed_url = reqwest::Url::parse(&url).map_err(|err| ConfigError::Shape {
+                    path: path.to_path_buf(),
+                    reason: format!("the HTTP server {name} URL is invalid: {err}"),
+                })?;
+                if !matches!(parsed_url.scheme(), "http" | "https")
+                    || parsed_url.host_str().is_none()
+                {
+                    return Err(ConfigError::Shape {
+                        path: path.to_path_buf(),
+                        reason: format!("the HTTP server {name} URL must use http:// or https://"),
+                    });
+                }
+                Transport::Http {
+                    url,
+                    headers: raw.headers,
+                }
+            }
+            kind => {
+                return Err(ConfigError::Shape {
+                    path: path.to_path_buf(),
+                    reason: format!("the server {name} has unsupported transport type {kind:?}"),
+                });
+            }
+        };
+        out.insert(name.clone(), Server { transport });
     }
 
     Ok(Config { servers: out })
@@ -203,8 +261,12 @@ mod tests {
         let config = parse(Path::new("mcp.json"), text).unwrap();
 
         assert_eq!(config.servers.len(), 2);
-        assert_eq!(config.server("nixos").unwrap().command, "mcp-nixos");
-        assert_eq!(config.server("vulnx").unwrap().args, vec!["mcp"]);
+        assert!(
+            matches!(&config.server("nixos").unwrap().transport, Transport::Stdio { command, .. } if command == "mcp-nixos")
+        );
+        assert!(
+            matches!(&config.server("vulnx").unwrap().transport, Transport::Stdio { args, .. } if args == &["mcp"])
+        );
     }
 
     #[test]
@@ -217,7 +279,9 @@ mod tests {
 
         let config = parse(Path::new("mcp.json"), text).unwrap();
 
-        assert_eq!(config.server("nixos").unwrap().command, "mcp-nixos");
+        assert!(
+            matches!(&config.server("nixos").unwrap().transport, Transport::Stdio { command, .. } if command == "mcp-nixos")
+        );
     }
 
     #[test]
@@ -239,15 +303,35 @@ mod tests {
 
         let config = parse(Path::new("mcp.json"), text).unwrap();
 
-        assert_eq!(
-            config
-                .server("nixos")
-                .unwrap()
-                .env
-                .get("KEY")
-                .map(String::as_str),
-            Some("value")
+        assert!(
+            matches!(&config.server("nixos").unwrap().transport, Transport::Stdio { env, .. } if env.get("KEY").is_some_and(|value| value == "value"))
         );
+    }
+
+    #[test]
+    fn reads_streamable_http_and_https_servers_with_headers() {
+        let text = r#"{
+            "mcpServers": {
+                "gateway": { "type": "http", "url": "https://localhost:39400/mcp", "headers": { "Authorization": "Bearer ${GATEWAY_TOKEN}" } }
+            }
+        }"#;
+
+        let config = parse(Path::new("mcp.json"), text).unwrap();
+        assert!(
+            matches!(&config.server("gateway").unwrap().transport, Transport::Http { url, headers } if url == "https://localhost:39400/mcp" && headers.contains_key("Authorization"))
+        );
+    }
+
+    #[test]
+    fn rejects_http_servers_without_urls_and_unsupported_transports() {
+        for text in [
+            r#"{"server": {"type": "http"}}"#,
+            r#"{"server": {"type": "websocket", "url": "ws://localhost"}}"#,
+            r#"{"server": {"type": "http", "url": "ftp://localhost"}}"#,
+            r#"{"server": {"type": "http", "url": "http://"}}"#,
+        ] {
+            assert!(parse(Path::new("mcp.json"), text).is_err());
+        }
     }
 
     #[test]
