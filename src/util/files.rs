@@ -173,10 +173,8 @@ mod tests {
     }
 
     #[test]
-    fn expands_home_against_the_real_environment() {
-        // A home directory is always set in a test environment.
-        let home = env::var("HOME").unwrap();
-        assert_eq!(expand_path("~/x", Some(&home)), format!("{home}/x"));
+    fn expands_home_with_the_supplied_directory() {
+        assert_eq!(expand_path("~/x", Some("/home/test")), "/home/test/x");
         assert_eq!(expand_path("~/x", None), "~/x");
     }
 
