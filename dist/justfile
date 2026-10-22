@@ -1,4 +1,4 @@
-name := "gareth"
+name := `basename "$(git rev-parse --show-toplevel)"`
 repo := "hashbangcore/" + name
 target := "x86_64-unknown-linux-gnu"
 version := "v" + `cargo pkgid | sed 's/.*#//'`
